@@ -8,6 +8,9 @@ their respective licenses.
 Upstream runtime: https://github.com/openJiuwen-ai/iCode
 Plugin repository: https://github.com/zybwh/iCode-vscode-plugin
 
+Frontend dependency notices: THIRD_PARTY_NOTICES.md and licenses/
+Artwork provenance: ASSET_PROVENANCE.md
+
 Original extension notice
 =========================
 

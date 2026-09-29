@@ -43,6 +43,8 @@ jobs:
         run: npm run lint
       - name: Test units and manifest
         run: npm test -- src/__tests__
+      - name: Test license packaging
+        run: npm run test:packaging
       - name: Build bundles
         run: npm run build
       - name: Package universal VSIX

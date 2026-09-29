@@ -93,7 +93,7 @@ For release gating, use [VSIX Release Checklist](./RELEASE_CHECKLIST.md). It is 
 
 `npm run deploy` packages the universal VSIX and installs it into the local macOS openUBMC Studio app for dogfooding. It does not publish a marketplace or GitHub release.
 
-Release builds are manual. The CD workflow publishes a VSIX tag such as `v0.0.20-icode-v0.27.1` from a selected ref and downloads offline runtime binaries from the public [iCode releases](https://github.com/openJiuwen-ai/iCode/releases). It uses the standard GitHub Actions token; no private backend repository token is required.
+Release builds are manual. The CD workflow publishes a VSIX tag such as `v0.0.21-icode-v0.27.1` from a selected ref and downloads offline runtime binaries from the public [iCode releases](https://github.com/openJiuwen-ai/iCode/releases). It uses the standard GitHub Actions token; no private backend repository token is required.
 
 ## Current Status
 
@@ -172,9 +172,9 @@ npm run build
 npm run package
 ```
 
-The package command requires [uv](https://github.com/astral-sh/uv) and writes `icode-vscode-plugin-0.0.20.vsix`. The universal VSIX does not bundle the CLI. `npm run deploy` installs it into the local macOS openUBMC Studio application.
+The package command requires [uv](https://github.com/astral-sh/uv) and writes `icode-vscode-plugin-0.0.21.vsix`. The universal VSIX does not bundle the CLI. `npm run deploy` installs it into the local macOS openUBMC Studio application.
 
-打包需要 [uv](https://github.com/astral-sh/uv)，输出 `icode-vscode-plugin-0.0.20.vsix`。通用包不包含 CLI；`npm run deploy` 会安装到本机 macOS 的 openUBMC Studio。
+打包需要 [uv](https://github.com/astral-sh/uv)，输出 `icode-vscode-plugin-0.0.21.vsix`。通用包不包含 CLI；`npm run deploy` 会安装到本机 macOS 的 openUBMC Studio。
 
 For integration tests, set `ICODE_BINARY_PATH` to the iCode executable and run `npm run test:integration`. The default expected CLI version is 0.27.1; override it with `ICODE_EXPECTED_VERSION` when testing another release. Model-backed tests require a configured model profile.
 
@@ -194,3 +194,15 @@ For integration tests, set `ICODE_BINARY_PATH` to the iCode executable and run `
 This project uses the [Apache License 2.0](./LICENSE), the same license as [upstream iCode](https://github.com/openJiuwen-ai/iCode/blob/main/LICENSE). The original extension copyright and MIT permission notice are preserved in [NOTICE](./NOTICE). Third-party dependencies and assets retain their own applicable licenses.
 
 本项目采用与 [上游 iCode](https://github.com/openJiuwen-ai/iCode/blob/main/LICENSE) 一致的 [Apache License 2.0](./LICENSE)。原扩展的版权声明和 MIT 许可文本保留在 [NOTICE](./NOTICE) 中。第三方依赖和素材仍适用各自的许可证。
+
+Third-party frontend licenses ship in [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md)
+and [licenses/](./licenses/). Companion ownership is recorded in
+[ASSET_PROVENANCE.md](./ASSET_PROVENANCE.md). Platform packaging retains upstream
+runtime license files; raw `--binary` inputs require adjacent upstream `LICENSE`
+and `NOTICE` files. Run `npm run build` before packaging to refresh the dependency
+inventory checked by the packer.
+
+前端依赖的完整许可随包提供，见 [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md)
+和 [licenses/](./licenses/)；伙伴素材来源见 [ASSET_PROVENANCE.md](./ASSET_PROVENANCE.md)。
+平台包保留后端许可文件；使用 `--binary` 打包时，二进制旁必须提供上游 `LICENSE`
+和 `NOTICE`。打包前运行 `npm run build`，以更新打包器校验的依赖清单。

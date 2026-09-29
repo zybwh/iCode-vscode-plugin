@@ -38,7 +38,7 @@ Universal VSIX packages must not include `extension/bin/`. Platform VSIX package
 
 ## GitHub Release
 
-The CD workflow is manual-only. Creating a GitHub release or tag must not automatically start CD, because release tags such as `v0.0.20-icode-v0.27.1` are VSIX tags, not iCode CLI runtime tags.
+The CD workflow is manual-only. Creating a GitHub release or tag must not automatically start CD, because release tags such as `v0.0.21-icode-v0.27.1` are VSIX tags, not iCode CLI runtime tags.
 
 When using CD to publish platform VSIX packages, pass both:
 
@@ -210,3 +210,13 @@ A VSIX release candidate is acceptable when:
 - Keep new connection errors/startup progress visible after an earlier ready indicator expires. Return Buddy to idle five seconds after petting, without requiring another host update.
 
 - Welcome branding defaults to iCode; clicking its mark opens the iCode/iCode picker. Verify switching, cancelling, reopening, and changing `chrys.ui.brand` directly while the backend version remains visible.
+
+## Third-party licenses and artwork
+
+- Run `npm run test:packaging` to check missing notices, dependency changes, and all five target layouts.
+- Build before packaging; dependency inventories must match `licenses/components.json`.
+- Inspect the VSIX for `LICENSE`, `NOTICE`, `THIRD_PARTY_NOTICES.md`, `ASSET_PROVENANCE.md`, and the complete `licenses/` files.
+- Updating a bundled dependency requires updating its exact version, license text and hash.
+- Keep `@vscode/vsce` and its proprietary signing dependency out of this custom packer workflow.
+- Platform packages must preserve the iCode dist-info LICENSE/NOTICE and dependency license files on every target. Raw binaries require adjacent upstream LICENSE/NOTICE, packaged under `runtime-licenses/`.
+- Record provenance for new or replaced artwork in `ASSET_PROVENANCE.md` before release.

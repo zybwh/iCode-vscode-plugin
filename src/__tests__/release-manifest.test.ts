@@ -164,7 +164,7 @@ describe("VSIX release manifest", () => {
     expect(readSource("LICENSE")).toContain("Version 2.0, January 2004");
     expect(readSource("NOTICE")).toContain("Copyright (c) 2026 Jiaqi (0x7c13) Liu");
     expect(readSource("NOTICE")).toContain("Permission is hereby granted, free of charge");
-    expect(readSource("scripts", "pack.py")).toContain('z.write(notice_path, "extension/NOTICE")');
+    expect(readSource("scripts", "pack.py")).toContain("validate_frontend_licenses(ext_dir)");
     const readme = readSource("README.md");
     expect(readme).toContain("## English");
     expect(readme).toContain("## 中文说明");
@@ -172,6 +172,20 @@ describe("VSIX release manifest", () => {
     expect(readme).toContain("https://github.com/openJiuwen-ai/iCode");
     expect(readme).toContain("## License / 许可证");
     expect(readme).not.toContain("https://github.com/0x7c13/chrys");
+  });
+
+  it("keeps bundled dependency licenses complete and unused signing tools out", () => {
+    const lock = JSON.parse(readSource("package-lock.json"));
+    expect(Object.keys(lock.packages).some(name => name.includes("@vscode/vsce"))).toBe(false);
+    const components = JSON.parse(readSource("licenses", "components.json")) as Array<{name: string; version: string; file: string}>;
+    for (const component of components) {
+      expect(lock.packages[`node_modules/${component.name}`].version).toBe(component.version);
+      const original = component.name === "marked" ? "LICENSE.md" : "LICENSE";
+      expect(readSource(component.file)).toBe(readSource("node_modules", component.name, original));
+    }
+    const provenance = readSource("ASSET_PROVENANCE.md");
+    const assets = fs.readdirSync(path.join(extensionRoot, "src/chat/webview/assets/companions"));
+    for (const asset of assets.filter(name => name.endsWith(".webp"))) expect(provenance).toContain(asset);
   });
 
   it("ships marketplace-facing metadata assets", () => {
@@ -573,7 +587,7 @@ describe("VSIX release manifest", () => {
     expect(releaseChecklist).toContain("dedicated ACP reset route");
   });
 
-  it("keeps VSIX 0.0.20 release metadata aligned", () => {
+  it("keeps VSIX 0.0.21 release metadata aligned", () => {
     const packageLock = JSON.parse(readSource("package-lock.json")) as {
       version: string;
       packages: Record<string, { version?: string }>;
@@ -582,11 +596,11 @@ describe("VSIX release manifest", () => {
     const readme = readSource("README.md");
     const workflow = readSource(".github", "workflows", "cd.yml");
 
-    expect(packageJson.version).toBe("0.0.20");
-    expect(packageLock.version).toBe("0.0.20");
-    expect(packageLock.packages[""].version).toBe("0.0.20");
-    expect(versionSource).toContain('PACKAGE_VERSION = "0.0.20"');
-    expect(readme).toContain("v0.0.20-icode-v0.27.1");
+    expect(packageJson.version).toBe("0.0.21");
+    expect(packageLock.version).toBe("0.0.21");
+    expect(packageLock.packages[""].version).toBe("0.0.21");
+    expect(versionSource).toContain('PACKAGE_VERSION = "0.0.21"');
+    expect(readme).toContain("v0.0.21-icode-v0.27.1");
     expect(workflow).toMatch(/VSIX release tag to create, for example v\d+\.\d+\.\d+-icode-v\d+\.\d+\.\d+/);
   });
 

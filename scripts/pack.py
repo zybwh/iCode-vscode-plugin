@@ -1,6 +1,7 @@
 """Build icode-vscode-plugin VSIX package."""
 
 import argparse
+import hashlib
 import json
 import os
 import stat
@@ -81,6 +82,53 @@ def zip_write_directory(z: zipfile.ZipFile, source_dir: Path, arcdir: str) -> No
         z.write(source, arcname)
 
 
+def validate_frontend_licenses(ext_dir: Path) -> list[Path]:
+    """Reject missing, stale or unreviewed bundled dependency notices."""
+    required = ["LICENSE", "NOTICE", "THIRD_PARTY_NOTICES.md", "ASSET_PROVENANCE.md",
+                "licenses/components.json"]
+    for name in required:
+        if not (ext_dir / name).is_file():
+            raise SystemExit(f"required license document missing: {name}")
+    components = json.loads((ext_dir / "licenses/components.json").read_text())
+    lock = json.loads((ext_dir / "package-lock.json").read_text())
+    approved = set()
+    paths = [ext_dir / name for name in required]
+    for component in components:
+        name = component["name"]
+        locked = lock["packages"].get(f"node_modules/{name}", {})
+        if locked.get("version") != component["version"]:
+            raise SystemExit(f"license inventory version mismatch: {name}")
+        license_path = ext_dir / component["file"]
+        if not license_path.is_file():
+            raise SystemExit(f"dependency license missing: {name}")
+        if hashlib.sha256(license_path.read_bytes()).hexdigest() != component["sha256"]:
+            raise SystemExit(f"dependency license hash mismatch: {name}")
+        approved.add(name)
+        paths.append(license_path)
+    bundled = set()
+    for bundle in ["extension.js", "webview.js"]:
+        metadata = ext_dir / "dist" / f"{bundle}.meta.json"
+        if not metadata.is_file():
+            raise SystemExit("build dependency inventory missing; run npm run build")
+        for source in json.loads(metadata.read_text())["inputs"]:
+            parts = source.replace("\\", "/").split("node_modules/")
+            if len(parts) == 1:
+                continue
+            package_parts = parts[-1].split("/")
+            name = "/".join(package_parts[:2]) if package_parts[0].startswith("@") else package_parts[0]
+            bundled.add(name)
+    if bundled != approved:
+        raise SystemExit(f"bundled dependency license inventory mismatch: bundled={sorted(bundled)}, approved={sorted(approved)}")
+    return paths
+
+
+def validate_runtime_licenses(runtime_path: Path) -> None:
+    candidates = list(runtime_path.glob("python/**/chrys-*.dist-info/licenses"))
+    if not any(all((directory / name).is_file() and (directory / name).stat().st_size
+                   for name in ["LICENSE", "NOTICE"]) for directory in candidates):
+        raise SystemExit("bundled runtime must retain iCode dist-info LICENSE and NOTICE")
+
+
 def main() -> None:
     args = parse_args()
     if args.binary and args.runtime:
@@ -91,6 +139,7 @@ def main() -> None:
     this_dir = Path(__file__).resolve().parent
     ext_dir = this_dir.parent  # vscode/
 
+    license_paths = validate_frontend_licenses(ext_dir)
     pkg_path = ext_dir / "package.json"
     with open(pkg_path) as f:
         pkg = json.load(f)
@@ -111,10 +160,16 @@ def main() -> None:
     binary_name = None
     runtime_path = None
     runtime_launcher = None
+    binary_notices = []
     if args.binary:
         binary_path = args.binary.resolve()
         if not binary_path.is_file():
             raise SystemExit(f"bundled binary not found: {binary_path}")
+        for name in ["LICENSE", "NOTICE"]:
+            notice = binary_path.parent / name
+            if not notice.is_file() or not notice.stat().st_size:
+                raise SystemExit(f"raw binary requires adjacent upstream {name}")
+            binary_notices.append(notice)
         binary_name = "chrys.exe" if args.target == "win32-x64" else "chrys"
         if binary_name == "chrys.exe" and binary_path.name != "chrys.exe":
             raise SystemExit("win32-x64 platform VSIX expects a chrys.exe binary")
@@ -124,6 +179,7 @@ def main() -> None:
         runtime_path = args.runtime.resolve()
         if not runtime_path.is_dir():
             raise SystemExit(f"bundled runtime directory not found: {runtime_path}")
+        validate_runtime_licenses(runtime_path)
         runtime_launcher = runtime_launcher_name(args.target)
         if not (runtime_path / runtime_launcher).is_file():
             raise SystemExit(f"{args.target} platform VSIX expects runtime launcher {runtime_launcher}")
@@ -170,12 +226,10 @@ def main() -> None:
         z.writestr("extension/package.json", json.dumps(pkg, indent=2))
         for nls_file in sorted(ext_dir.glob("package.nls*.json")):
             z.write(nls_file, f"extension/{nls_file.name}")
-        license_path = ext_dir / "LICENSE"
-        if license_path.exists():
-            z.write(license_path, "extension/LICENSE")
-        notice_path = ext_dir / "NOTICE"
-        if notice_path.exists():
-            z.write(notice_path, "extension/NOTICE")
+        for document in license_paths:
+            z.write(document, f"extension/{document.relative_to(ext_dir).as_posix()}")
+        for document in binary_notices:
+            z.write(document, f"extension/runtime-licenses/{document.name}")
         readme_path = ext_dir / "README.md"
         if readme_path.exists():
             z.write(readme_path, "extension/README.md")

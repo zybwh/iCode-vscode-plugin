@@ -1,0 +1,18 @@
+[
+  {
+    "name": "marked",
+    "version": "15.0.12",
+    "license": "MIT",
+    "source": "https://github.com/markedjs/marked",
+    "file": "licenses/marked-LICENSE.txt",
+    "sha256": "8e3a3f82f59a60958f56ca08f445647c32a4733dc7ca6c2c46f6eb898471ab9c"
+  },
+  {
+    "name": "dompurify",
+    "version": "3.4.5",
+    "license": "Apache-2.0",
+    "source": "https://github.com/cure53/DOMPurify",
+    "file": "licenses/dompurify-LICENSE.txt",
+    "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+  }
+]

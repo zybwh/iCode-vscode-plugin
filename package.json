@@ -2,7 +2,7 @@
   "name": "icode-vscode-plugin",
   "displayName": "iCode",
   "description": "%extension.description%",
-  "version": "0.0.20",
+  "version": "0.0.21",
   "publisher": "icode",
   "license": "Apache-2.0",
   "repository": {
@@ -544,12 +544,12 @@
     "lint": "tsc --noEmit && tsc --noEmit -p tsconfig.webview.json",
     "assets:clean-companion-fringe": "node scripts/clean_companion_fringe.mjs",
     "package": "uv run python scripts/pack.py",
-    "deploy": "npm run package && '/Applications/openUBMC Studio.app/Contents/Resources/app/bin/studio' --install-extension icode-vscode-plugin-$npm_package_version.vsix --force && echo 'Deployed OK，重启 Studio 窗口生效'"
+    "deploy": "npm run package && '/Applications/openUBMC Studio.app/Contents/Resources/app/bin/studio' --install-extension icode-vscode-plugin-$npm_package_version.vsix --force && echo 'Deployed OK，重启 Studio 窗口生效'",
+    "test:packaging": "uv run python -m unittest discover -s tests/packaging"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
     "@types/vscode": "^1.95.0",
-    "@vscode/vsce": "^3.9.1",
     "dompurify": "^3.2.0",
     "esbuild": "^0.24.0",
     "jsdom": "^26.1.0",

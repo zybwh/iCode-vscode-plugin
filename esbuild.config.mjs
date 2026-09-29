@@ -1,5 +1,5 @@
 import * as esbuild from "esbuild";
-import { cpSync, copyFileSync, existsSync, mkdirSync } from "node:fs";
+import { cpSync, copyFileSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 
 const watch = process.argv.includes("--watch");
@@ -9,6 +9,7 @@ const webview = process.argv.includes("--webview");
 const extensionConfig = {
   entryPoints: ["src/extension.ts"],
   bundle: true,
+  metafile: true,
   outfile: "dist/extension.js",
   external: ["vscode"],
   platform: "node",
@@ -22,6 +23,7 @@ const extensionConfig = {
 const webviewConfig = {
   entryPoints: ["src/chat/webview/app.ts"],
   bundle: true,
+  metafile: true,
   outfile: "dist/webview.js",
   platform: "browser",
   format: "iife",
@@ -51,7 +53,8 @@ async function build() {
     copyWebviewAssets();
     console.log(`[esbuild] watching ${webview ? "webview" : "extension"}...`);
   } else {
-    await esbuild.build(config);
+    const result = await esbuild.build(config);
+    writeFileSync(`${config.outfile}.meta.json`, JSON.stringify(result.metafile));
     copyThemeCss();
     copyWebviewAssets();
     console.log(`[esbuild] ${webview ? "webview" : "extension"} build complete`);
