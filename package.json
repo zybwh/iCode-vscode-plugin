@@ -1,0 +1,560 @@
+{
+  "name": "icode-vscode-plugin",
+  "displayName": "iCode",
+  "description": "%extension.description%",
+  "version": "0.0.19",
+  "publisher": "icode",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/zybwh/iCode-vscode-plugin"
+  },
+  "icon": "resources/icon.png",
+  "engines": {
+    "vscode": "^1.95.0"
+  },
+  "categories": [
+    "Chat",
+    "Programming Languages",
+    "Other"
+  ],
+  "keywords": [
+    "ai",
+    "agent",
+    "coding",
+    "chat",
+    "copilot"
+  ],
+  "extensionKind": [
+    "workspace"
+  ],
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": false,
+      "description": "%capabilities.untrustedWorkspaces.description%"
+    },
+    "virtualWorkspaces": false
+  },
+  "main": "./dist/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "chrys.focusChat",
+        "title": "%command.focusChat.title%",
+        "category": "iCode",
+        "icon": "$(comment-discussion)"
+      },
+      {
+        "command": "chrys.newSession",
+        "title": "%command.newSession.title%",
+        "category": "iCode",
+        "icon": "$(add)"
+      },
+      {
+        "command": "chrys.selectAgent",
+        "title": "%command.selectAgent.title%",
+        "category": "iCode"
+      },
+      {
+        "command": "chrys.listSessions",
+        "title": "%command.listSessions.title%",
+        "category": "iCode"
+      },
+      {
+        "command": "chrys.sendPrompt",
+        "title": "%command.sendPrompt.title%",
+        "category": "iCode"
+      },
+      {
+        "command": "chrys.fillComposer",
+        "title": "%command.fillComposer.title%",
+        "category": "iCode"
+      },
+      {
+        "command": "chrys.sendText",
+        "title": "%command.sendText.title%",
+        "category": "iCode"
+      },
+      {
+        "command": "chrys.showLogs",
+        "title": "%command.showLogs.title%",
+        "category": "iCode",
+        "icon": "$(list-flat)"
+      },
+      {
+        "command": "chrys.runtimeDetails",
+        "title": "%command.runtimeDetails.title%",
+        "category": "iCode"
+      },
+      {
+        "command": "chrys.showDiff",
+        "title": "%command.showDiff.title%",
+        "category": "iCode"
+      },
+      {
+        "command": "chrys.rollback",
+        "title": "%command.rollback.title%",
+        "category": "iCode"
+      },
+      {
+        "command": "chrys.retrySubAgent",
+        "title": "%command.retrySubAgent.title%",
+        "category": "iCode"
+      },
+      {
+        "command": "chrys.abortSubAgent",
+        "title": "%command.abortSubAgent.title%",
+        "category": "iCode"
+      },
+      {
+        "command": "chrys.setApprovalMode",
+        "title": "%command.setApprovalMode.title%",
+        "category": "iCode"
+      },
+      {
+        "command": "chrys.switchAgent",
+        "title": "%command.switchAgent.title%",
+        "category": "iCode"
+      },
+      {
+        "command": "chrys.showAgentProfiles",
+        "title": "%command.showAgentProfiles.title%",
+        "category": "iCode"
+      },
+      {
+        "command": "chrys.showModelProfiles",
+        "title": "%command.showModelProfiles.title%",
+        "category": "iCode"
+      },
+      {
+        "command": "chrys.reloadSettings",
+        "title": "%command.reloadSettings.title%",
+        "category": "iCode"
+      },
+      {
+        "command": "chrys.changeWorkspace",
+        "title": "%command.changeWorkspace.title%",
+        "category": "iCode"
+      },
+      {
+        "command": "chrys.showStructuredHistory",
+        "title": "%command.showStructuredHistory.title%",
+        "category": "iCode",
+        "icon": "$(json)"
+      },
+      {
+        "command": "chrys.setModelProfile",
+        "title": "%command.setModelProfile.title%",
+        "category": "iCode"
+      },
+      {
+        "command": "chrys.createModelProfile",
+        "title": "%command.createModelProfile.title%",
+        "category": "iCode"
+      },
+      {
+        "command": "chrys.deleteModelProfile",
+        "title": "%command.deleteModelProfile.title%",
+        "category": "iCode"
+      },
+      {
+        "command": "chrys.deleteAgentProfile",
+        "title": "%command.deleteAgentProfile.title%",
+        "category": "iCode"
+      },
+      {
+        "command": "chrys.testMcpServer",
+        "title": "%command.testMcpServer.title%",
+        "category": "iCode"
+      },
+      {
+        "command": "chrys.setConfigOption",
+        "title": "%command.setConfigOption.title%",
+        "category": "iCode"
+      },
+      {
+        "command": "chrys.manage",
+        "title": "%command.manage.title%",
+        "category": "iCode"
+      },
+      {
+        "command": "chrys.manageModels",
+        "title": "%command.manageModels.title%",
+        "category": "iCode",
+        "icon": "$(server-process)"
+      },
+      {
+        "command": "chrys.manageAgents",
+        "title": "%command.manageAgents.title%",
+        "category": "iCode",
+        "icon": "$(hubot)"
+      },
+      {
+        "command": "chrys.pickTheme",
+        "title": "%command.pickTheme.title%",
+        "category": "iCode",
+        "icon": "$(color-mode)"
+      },
+      {
+        "command": "chrys.pickLanguage",
+        "title": "%command.pickLanguage.title%",
+        "category": "iCode",
+        "icon": "$(globe)"
+      },
+      {
+        "command": "chrys.showNotifications",
+        "title": "%command.showNotifications.title%",
+        "category": "iCode",
+        "icon": "$(bell)"
+      },
+      {
+        "command": "chrys.diagnostics",
+        "title": "%command.diagnostics.title%",
+        "category": "iCode",
+        "icon": "$(output)"
+      },
+      {
+        "command": "chrys.copySupportBundle",
+        "title": "%command.copySupportBundle.title%",
+        "category": "iCode",
+        "icon": "$(clippy)"
+      },
+      {
+        "command": "chrys.doctor",
+        "title": "%command.doctor.title%",
+        "category": "iCode",
+        "icon": "$(tools)"
+      },
+      {
+        "command": "chrys.loadSessionFromTree",
+        "title": "%command.loadSessionFromTree.title%",
+        "category": "iCode"
+      },
+      {
+        "command": "chrys.openSessionJsonFromTree",
+        "title": "%command.openSessionJsonFromTree.title%",
+        "category": "iCode",
+        "icon": "$(json)"
+      },
+      {
+        "command": "chrys.copySessionJsonPathFromTree",
+        "title": "%command.copySessionJsonPathFromTree.title%",
+        "category": "iCode",
+        "icon": "$(copy)"
+      },
+      {
+        "command": "chrys.copySessionIdFromTree",
+        "title": "%command.copySessionIdFromTree.title%",
+        "category": "iCode",
+        "icon": "$(clippy)"
+      },
+      {
+        "command": "chrys.copySessionSummaryFromTree",
+        "title": "%command.copySessionSummaryFromTree.title%",
+        "category": "iCode",
+        "icon": "$(notebook)"
+      },
+      {
+        "command": "chrys.deleteSessionFromTree",
+        "title": "%command.deleteSessionFromTree.title%",
+        "category": "iCode",
+        "icon": "$(trash)"
+      },
+      {
+        "command": "chrys.refreshSessionTree",
+        "title": "%command.refreshSessionTree.title%",
+        "category": "iCode",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "chrys.showPromptHistory",
+        "title": "%command.showPromptHistory.title%",
+        "category": "iCode"
+      },
+      {
+        "command": "chrys.renameSession",
+        "title": "%command.renameSession.title%",
+        "category": "iCode",
+        "icon": "$(edit)"
+      }
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "chrys-sessions",
+          "title": "%views.container.title%",
+          "icon": "resources/chrys.svg"
+        }
+      ]
+    },
+    "views": {
+      "chrys-sessions": [
+        {
+          "id": "chrys-sessions",
+          "name": "%views.sessions.name%",
+          "contextualTitle": "%views.sessions.contextualTitle%"
+        }
+      ]
+    },
+    "viewsWelcome": [
+      {
+        "view": "chrys-sessions",
+        "contents": "%viewsWelcome.sessions.contents%"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "chrys.focusChat",
+          "when": "view == chrys-sessions",
+          "group": "navigation@0"
+        },
+        {
+          "command": "chrys.newSession",
+          "when": "view == chrys-sessions",
+          "group": "navigation@1"
+        },
+        {
+          "command": "chrys.refreshSessionTree",
+          "when": "view == chrys-sessions",
+          "group": "navigation@9"
+        },
+        {
+          "command": "chrys.manageAgents",
+          "when": "view == chrys-sessions",
+          "group": "chrys@1"
+        },
+        {
+          "command": "chrys.manageModels",
+          "when": "view == chrys-sessions",
+          "group": "chrys@2"
+        },
+        {
+          "command": "chrys.showLogs",
+          "when": "view == chrys-sessions",
+          "group": "chrys@3"
+        },
+        {
+          "command": "chrys.pickTheme",
+          "when": "view == chrys-sessions",
+          "group": "chrys@4"
+        },
+        {
+          "command": "chrys.showNotifications",
+          "when": "view == chrys-sessions",
+          "group": "chrys@5"
+        },
+        {
+          "command": "chrys.showStructuredHistory",
+          "when": "view == chrys-sessions",
+          "group": "chrys@6"
+        },
+        {
+          "command": "chrys.doctor",
+          "when": "view == chrys-sessions",
+          "group": "chrys@7"
+        },
+        {
+          "command": "chrys.diagnostics",
+          "when": "view == chrys-sessions",
+          "group": "chrys@8"
+        },
+        {
+          "command": "chrys.copySupportBundle",
+          "when": "view == chrys-sessions",
+          "group": "chrys@9"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "chrys.openSessionJsonFromTree",
+          "when": "view == chrys-sessions && viewItem == session",
+          "group": "inline@1"
+        },
+        {
+          "command": "chrys.copySessionJsonPathFromTree",
+          "when": "view == chrys-sessions && viewItem == session",
+          "group": "navigation@1"
+        },
+        {
+          "command": "chrys.copySessionIdFromTree",
+          "when": "view == chrys-sessions && viewItem == session",
+          "group": "navigation@2"
+        },
+        {
+          "command": "chrys.copySessionSummaryFromTree",
+          "when": "view == chrys-sessions && viewItem == session",
+          "group": "navigation@3"
+        },
+        {
+          "command": "chrys.deleteSessionFromTree",
+          "when": "view == chrys-sessions && viewItem == session",
+          "group": "inline@9"
+        },
+        {
+          "command": "chrys.renameSession",
+          "when": "view == chrys-sessions && viewItem == session",
+          "group": "navigation@0"
+        }
+      ],
+      "editor/title": [
+        {
+          "command": "chrys.focusChat",
+          "when": "resourceScheme == file",
+          "group": "navigation",
+          "icon": "$(comment-discussion)"
+        },
+        {
+          "command": "chrys.renameSession",
+          "when": "activeWebviewPanelId == chrys.chat",
+          "group": "navigation@2"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "%configuration.title%",
+      "properties": {
+        "chrys.binary.path": {
+          "type": "string",
+          "default": "",
+          "description": "%configuration.binary.path.description%"
+        },
+        "chrys.agent.default": {
+          "type": "string",
+          "default": "",
+          "description": "%configuration.agent.default.description%"
+        },
+        "chrys.model.profile": {
+          "type": "string",
+          "default": "",
+          "description": "%configuration.model.profile.description%"
+        },
+        "chrys.approval.mode": {
+          "type": "string",
+          "default": "auto",
+          "enum": [
+            "manual",
+            "auto",
+            "bypass"
+          ],
+          "enumDescriptions": [
+            "%configuration.approval.mode.manual.description%",
+            "%configuration.approval.mode.auto.description%",
+            "%configuration.approval.mode.bypass.description%"
+          ],
+          "description": "%configuration.approval.mode.description%"
+        },
+        "chrys.ui.language": {
+          "type": "string",
+          "default": "auto",
+          "enum": [
+            "auto",
+            "en",
+            "zh-CN"
+          ],
+          "enumDescriptions": [
+            "%configuration.ui.language.auto.description%",
+            "%configuration.ui.language.en.description%",
+            "%configuration.ui.language.zh-cn.description%"
+          ],
+          "description": "%configuration.ui.language.description%"
+        },
+        "chrys.ui.theme": {
+          "type": "string",
+          "default": "auto",
+          "enum": [
+            "auto",
+            "ansi-dark",
+            "ansi-light",
+            "atom-one-dark",
+            "atom-one-light",
+            "catppuccin-frappe",
+            "catppuccin-latte",
+            "catppuccin-macchiato",
+            "catppuccin-mocha",
+            "chrys",
+            "chrys-ansi",
+            "dracula",
+            "flexoki",
+            "gruvbox",
+            "monokai",
+            "nord",
+            "rose-pine",
+            "rose-pine-dawn",
+            "rose-pine-moon",
+            "solarized-dark",
+            "solarized-light",
+            "textual-dark",
+            "textual-light",
+            "tokyo-night"
+          ],
+          "enumDescriptions": [
+            "%configuration.ui.theme.auto.description%",
+            "%configuration.ui.theme.ansi-dark.description%",
+            "%configuration.ui.theme.ansi-light.description%",
+            "%configuration.ui.theme.atom-one-dark.description%",
+            "%configuration.ui.theme.atom-one-light.description%",
+            "%configuration.ui.theme.catppuccin-frappe.description%",
+            "%configuration.ui.theme.catppuccin-latte.description%",
+            "%configuration.ui.theme.catppuccin-macchiato.description%",
+            "%configuration.ui.theme.catppuccin-mocha.description%",
+            "%configuration.ui.theme.chrys.description%",
+            "%configuration.ui.theme.chrys-ansi.description%",
+            "%configuration.ui.theme.dracula.description%",
+            "%configuration.ui.theme.flexoki.description%",
+            "%configuration.ui.theme.gruvbox.description%",
+            "%configuration.ui.theme.monokai.description%",
+            "%configuration.ui.theme.nord.description%",
+            "%configuration.ui.theme.rose-pine.description%",
+            "%configuration.ui.theme.rose-pine-dawn.description%",
+            "%configuration.ui.theme.rose-pine-moon.description%",
+            "%configuration.ui.theme.solarized-dark.description%",
+            "%configuration.ui.theme.solarized-light.description%",
+            "%configuration.ui.theme.textual-dark.description%",
+            "%configuration.ui.theme.textual-light.description%",
+            "%configuration.ui.theme.tokyo-night.description%"
+          ],
+          "description": "%configuration.ui.theme.description%"
+        },
+        "chrys.ui.brand": {
+          "type": "string",
+          "enum": [
+            "icode",
+            "chrys"
+          ],
+          "enumDescriptions": [
+            "%configuration.ui.brand.icode.description%",
+            "%configuration.ui.brand.chrys.description%"
+          ],
+          "default": "icode",
+          "scope": "window",
+          "description": "%configuration.ui.brand.description%"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "node esbuild.config.mjs",
+    "compile:webview": "node esbuild.config.mjs --webview",
+    "watch": "node esbuild.config.mjs --watch",
+    "build": "npm run compile && npm run compile:webview",
+    "test": "vitest run src/__tests__",
+    "test:integration": "vitest run tests/integration",
+    "test:watch": "vitest",
+    "lint": "tsc --noEmit && tsc --noEmit -p tsconfig.webview.json",
+    "assets:clean-companion-fringe": "node scripts/clean_companion_fringe.mjs",
+    "package": "uv run python scripts/pack.py",
+    "deploy": "npm run package && '/Applications/openUBMC Studio.app/Contents/Resources/app/bin/studio' --install-extension icode-vscode-plugin-$npm_package_version.vsix --force && echo 'Deployed OK，重启 Studio 窗口生效'"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/vscode": "^1.95.0",
+    "@vscode/vsce": "^3.9.1",
+    "dompurify": "^3.2.0",
+    "esbuild": "^0.24.0",
+    "jsdom": "^26.1.0",
+    "marked": "^15.0.0",
+    "typescript": "^5.7.0",
+    "vitest": "^2.1.0"
+  }
+}

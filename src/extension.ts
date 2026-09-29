@@ -1,0 +1,1512 @@
+import { withLocalSessionNames, setLocalSessionName } from "./session/localNames";
+import { initialWorkspacePath } from "./common/workspace";
+import type { ChatConnectionState } from "./chat/webview/connectionPresentation";
+import * as vscode from "vscode";
+import * as path from "node:path";
+import * as os from "node:os";
+import * as fs from "node:fs";
+import * as crypto from "node:crypto";
+import { ProcessManager } from "./process/manager";
+import { SessionManager } from "./session/manager";
+import { ChatPanel } from "./chat/panel";
+import { BUILTIN_AGENT_NAMES } from "./chat/agentProfileEdit";
+import { ApprovalHandler } from "./approval/modal";
+import { AskUserHandler } from "./askUser/modal";
+import { nextMessageId } from "./chat/provider";
+import { SessionTreeProvider } from "./views/sessionTree";
+import { logInfo, logWarn, logError, recordDebugEvent } from "./common/logging";
+import { resolveUiLanguage } from "./common/i18n";
+import { resolveUiTheme } from "./common/uiTheme";
+import { findSessionJsonPath, sessionShortId } from "./common/sessionFiles";
+import { chatPanelState } from "./common/chatPanelState";
+import { rt, bindRuntime, currentRuntime, withRuntime, focusRuntime, createSessionRuntime, findSessionRuntime, sessionRuntimes } from "./state/runtime";
+import { applyPreferredDefaultsToNewSession, initializePreferredDefaults, refreshPreferredDefaultsFromSettings, rememberPreferredAgent } from "./session/defaults";
+import { handleSessionUpdate } from "./handlers/session";
+import { resetRenderState, refreshRuntimeSnapshot } from "./handlers/notifications";
+import { PACKAGE_VERSION, PROTOCOL_VERSION } from "./common/version";
+import type { SessionInfo } from "./acp/types";
+
+export interface ChrysSessionStateEvent {
+  sessionState: 'idle' | 'running' | 'cancelling';
+  sessionId: string;
+}
+
+export interface ChrysApi {
+  readonly restartBackend: () => Promise<boolean>;
+  readonly onDidChangeSessionState: vscode.Event<ChrysSessionStateEvent>;
+}
+
+// Re-export helpers (maintain API compatibility)
+export { formatCount, objectValue, stringField, numberField, boolField } from "./common/utils";
+export { formatToolOutput, diffFromSnapshot, contentText } from "./handlers/session";
+export { languageFromPath } from "./ui/dialogs";
+export { PACKAGE_VERSION, PROTOCOL_VERSION } from "./common/version";
+const MAX_RESTART_ATTEMPTS = 3;
+const ACP_INITIALIZE_TIMEOUT_MS = 45_000;
+export const BUILTIN_AGENTS: readonly string[] = BUILTIN_AGENT_NAMES;
+const SELECT_AGENT_UNAVAILABLE_EVENT = "SelectAgentUnavailable";
+
+function recordLifecycleEvent(kind: string, detail = ""): void {
+  if (rt.chatPanel) {
+    rt.chatPanel?.appendDebugEvent(kind, detail);
+  } else {
+    recordDebugEvent(kind, detail);
+  }
+}
+
+function nativeText(en: string, zh: string): string {
+  const language = resolveUiLanguage(vscode.workspace.getConfiguration("chrys").get<string>("ui.language"), vscode.env.language);
+  return language === "zh-CN" ? zh : en;
+}
+
+// ──────────────────────────────────────────────
+// ChrysDiffProvider
+// ──────────────────────────────────────────────
+
+class ChrysDiffProvider implements vscode.TextDocumentContentProvider {
+  readonly onDidChangeEmitter = new vscode.EventEmitter<vscode.Uri>();
+  readonly onDidChange = this.onDidChangeEmitter.event;
+
+  provideTextDocumentContent(uri: vscode.Uri): string {
+    return [...sessionRuntimes].map(owner => owner.diffDocuments.get(uri.path)).find(value => value !== undefined) ?? "";
+  }
+}
+
+// ──────────────────────────────────────────────
+// Activate
+// ──────────────────────────────────────────────
+
+export function activate(context: vscode.ExtensionContext): Promise<ChrysApi> {
+  return withRuntime(currentRuntime(), () => activateRuntime(context));
+}
+
+async function activateRuntime(context: vscode.ExtensionContext): Promise<ChrysApi> {
+  rt.extensionContext = context;
+  rt.outputChannel = vscode.window.createOutputChannel("iCode");
+  context.subscriptions.push(rt.outputChannel);
+  context.subscriptions.push(vscode.workspace.registerTextDocumentContentProvider("chrys-diff", new ChrysDiffProvider()));
+  logInfo("Activating icode-vscode-plugin");
+  const config = vscode.workspace.getConfiguration("chrys");
+  initializePreferredDefaults();
+  rt.activeAgentName = rt.preferredAgentName;
+  rt.currentApprovalMode = rt.preferredApprovalMode;
+  rt.currentTheme = resolveUiTheme(config.get<string>("ui.theme"), process.env.CHRYS_THEME);
+  rt.connectionState = "resolving-workspace";
+  rt.connectionDetail = nativeText("Reading the active VS Code workspace", "正在读取当前 VS Code 工作区");
+  rt.connectionStartedAt = Date.now();
+  rt.connectionDurationMs = null;
+  registerCommands(context);
+  registerConfigurationListener(context);
+  ensureChatPanel(context);
+  ensureSessionTree(context);
+  rt.chatPanel?.reveal();
+  rt.chatPanel?.setState(chatPanelState());
+
+  rt.currentCwd = await resolveInitialCwd();
+  if (!rt.currentCwd) {
+    setConnectionState("error", nativeText("No working directory selected", "尚未选择工作目录"));
+    rt.transcript.appendMessage({
+      id: nextMessageId(),
+      kind: "error",
+      text: nativeText("Select a iCode workspace directory to start.", "请选择一个 iCode 工作区目录以开始。"),
+      timestamp: Date.now(),
+    });
+    return {
+      onDidChangeSessionState: rt.onDidChangeSessionState,
+      restartBackend: () => restartBackendConnection(context, rt.currentBinaryPath ?? undefined),
+    };
+  }
+  const saved = context.workspaceState.get<{ sessionId: string; cwd: string }>("chrys.session");
+  if (saved?.cwd === rt.currentCwd) rt.restoreSession = saved;
+  setConnectionState("resolving-backend", rt.currentCwd);
+
+  // Let VS Code finish activation while the external runtime warms up. The
+  // webview stays visibly staged and its input remains locked until ACP is ready.
+  void connectBackend(context).then(async (connected) => {
+    if (!connected) await offerBackendSetup(context);
+  }).catch((error) => {
+    const message = error instanceof Error ? error.message : String(error);
+    logError(`Background ACP startup failed: ${message}`);
+    setConnectionState("error", message);
+  });
+
+  return {
+    onDidChangeSessionState: rt.onDidChangeSessionState,
+    restartBackend: () => restartBackendConnection(context, rt.currentBinaryPath ?? undefined),
+  };
+}
+
+async function handleAcpInitializeFailure(err: unknown): Promise<void> {
+  const detail = err instanceof Error ? err.message : String(err);
+  const recentOutput = rt.processManager?.recentOutput.trim() ?? "";
+  const recentOutputTail = recentOutput.split("\n").slice(-20).join("\n");
+  const msg = nativeText(
+    `iCode ACP initialization failed: ${detail}. If this is a bundled platform VSIX, the bundled iCode runtime may be stuck during first-run setup. Open iCode logs for startup output, or try a iCode binary from PATH / chrys.binary.path while this platform package is being fixed.`,
+    `iCode ACP 初始化失败：${detail}。如果你正在使用内置运行时的平台 VSIX，内置 iCode 可能卡在首次运行初始化。请打开 iCode 日志查看启动输出，或先使用 PATH / chrys.binary.path 中的 iCode，直到这个平台包修复。`,
+  );
+  logError(recentOutputTail ? `${msg}\nRecent iCode startup output:\n${recentOutputTail}` : msg);
+  recordLifecycleEvent("AcpInitializeFailed", detail);
+  rt.transcript.appendMessage({
+    id: nextMessageId(),
+    kind: "error",
+    text: recentOutputTail
+      ? `${msg}\n\nRecent iCode startup output:\n${recentOutputTail}`
+      : msg,
+    timestamp: Date.now(),
+  });
+  rt.chatPanel?.setState(chatPanelState());
+  vscode.window.showErrorMessage(`iCode: ${msg}`);
+  try {
+    await rt.processManager?.stop();
+  } catch (stopErr) {
+    const stopMessage = stopErr instanceof Error ? stopErr.message : String(stopErr);
+    logWarn(`Failed to stop iCode after initialize failure: ${stopMessage}`);
+  }
+}
+
+function scheduleRestart(context: vscode.ExtensionContext): void {
+  if (rt.shuttingDown || !rt.currentBinaryPath || !rt.currentCwd) return;
+  if (rt.restartAttempts >= MAX_RESTART_ATTEMPTS) {
+    vscode.window.showErrorMessage(nativeText(
+      "The iCode backend crashed repeatedly. Reload the window to retry.",
+      "iCode 后端连续崩溃。请重新加载窗口后重试。",
+    ));
+    return;
+  }
+
+  rt.restartAttempts += 1;
+  const delay = Math.min(1000 * rt.restartAttempts, 5000);
+  logWarn(`Scheduling ACP restart attempt ${rt.restartAttempts}/${MAX_RESTART_ATTEMPTS} in ${delay}ms`);
+  setTimeout(() => {
+    if (rt.shuttingDown || !rt.processManager || rt.processManager.state !== "stopped" || !rt.currentBinaryPath || !rt.currentCwd) return;
+    void connectBackend(context, rt.currentBinaryPath).then((connected) => {
+      if (!connected) scheduleRestart(context);
+    }).catch((error) => {
+      const message = error instanceof Error ? error.message : String(error);
+      logError(`ACP restart failed: ${message}`);
+      console.error(`[iCode] ACP restart failed: ${message}`);
+      scheduleRestart(context);
+    });
+  }, delay);
+}
+
+export function buildAcpArgs(config: vscode.WorkspaceConfiguration, cwd: string): string[] {
+  const agent = rt.preferredAgentName || rt.activeAgentName || config.get<string>("agent.default") || process.env.CHRYS_DEFAULT_AGENT || "Code";
+  const configuredApproval = rt.preferredApprovalMode || config.get<string>("approval.mode") || "auto";
+  const approval = configuredApproval === "skip" ? "bypass" : configuredApproval;
+  return ["acp", "--agent", agent, "--approval", approval, "--workdir", cwd];
+}
+
+// ──────────────────────────────────────────────
+// Binary resolution
+// ──────────────────────────────────────────────
+
+async function resolveChrysBinary(config: vscode.WorkspaceConfiguration, context: vscode.ExtensionContext): Promise<string | null> {
+  logInfo("Resolving iCode binary: chrys.binary.path -> PATH lookup -> bundled platform binary");
+
+  const configBin = config.get<string>("binary.path");
+  if (configBin) {
+    const expandedConfigBin = expandHome(configBin);
+    logInfo(`Checking configured iCode binary path: ${expandedConfigBin}`);
+    const configuredPath = await executablePath(expandedConfigBin);
+    if (configuredPath) {
+      logInfo(`Using configured iCode binary: ${configuredPath}`);
+      return configuredPath;
+    }
+    logInfo(`Configured iCode binary is not executable: ${expandedConfigBin}`);
+    vscode.window.showWarningMessage(nativeText(
+      `iCode binary path "${configBin}" is not executable. Trying PATH and bundled fallback...`,
+      `iCode 可执行文件路径 "${configBin}" 不可执行。将尝试 PATH 和内置 fallback...`,
+    ));
+  } else {
+    logInfo("No chrys.binary.path configured.");
+  }
+
+  const pathBin = await findExecutableOnPath(process.platform === "win32" ? "icode.exe" : "icode")
+    ?? await findExecutableOnPath(platformBinaryName());
+  if (pathBin) {
+    logInfo(`Using PATH iCode binary: ${pathBin}`);
+    return pathBin;
+  }
+  logInfo(`No executable ${platformBinaryName()} found on PATH.`);
+
+  const bundledBin = await bundledChrysBinary(context);
+  if (bundledBin) {
+    logInfo(`Using bundled iCode binary: ${bundledBin}`);
+    return bundledBin;
+  }
+  logInfo("No bundled iCode binary found in this VSIX.");
+
+  return null;
+}
+
+function platformBinaryName(): string {
+  return process.platform === "win32" ? "chrys.exe" : "chrys";
+}
+
+function expandHome(value: string): string {
+  if (value === "~") return os.homedir();
+  if (value.startsWith(`~${path.sep}`) || value.startsWith("~/")) {
+    return path.join(os.homedir(), value.slice(2));
+  }
+  return value;
+}
+
+async function executablePath(candidate: string): Promise<string | null> {
+  try {
+    const accessMode = process.platform === "win32" ? fs.constants.F_OK : fs.constants.X_OK;
+    await fs.promises.access(candidate, accessMode);
+    return candidate;
+  } catch {
+    return null;
+  }
+}
+
+async function findExecutableOnPath(binaryName: string): Promise<string | null> {
+  const pathValue = process.env.PATH;
+  if (!pathValue) {
+    logInfo("PATH is empty or unavailable in the extension host environment.");
+    return null;
+  }
+  logInfo(`Searching PATH for ${binaryName}: ${pathValue}`);
+  for (const directory of pathValue.split(path.delimiter)) {
+    if (!directory) continue;
+    const candidate = path.join(directory, binaryName);
+    logInfo(`Checking PATH iCode candidate: ${candidate}`);
+    const resolved = await executablePath(candidate);
+    if (resolved) return resolved;
+  }
+  return null;
+}
+
+async function bundledChrysBinary(context: vscode.ExtensionContext): Promise<string | null> {
+  const runtimeCandidate = path.join(context.extensionUri.fsPath, "runtime", platformRuntimeLauncherName());
+  logInfo(`Checking bundled iCode runtime candidate: ${runtimeCandidate}`);
+  const runtimePath = await executablePath(runtimeCandidate);
+  if (runtimePath) return runtimePath;
+
+  const binaryCandidate = path.join(context.extensionUri.fsPath, "bin", platformBinaryName());
+  logInfo(`Checking bundled iCode binary candidate: ${binaryCandidate}`);
+  return executablePath(binaryCandidate);
+}
+
+function platformRuntimeLauncherName(): string {
+  return process.platform === "win32" ? "chrys.cmd" : "chrys";
+}
+
+function pyappCacheDir(): string {
+  if (process.platform === "darwin") {
+    return path.join(os.homedir(), "Library", "Application Support", "pyapp", "chrys");
+  }
+  if (process.platform === "win32") {
+    return path.join(process.env.LOCALAPPDATA || path.join(os.homedir(), "AppData", "Local"), "pyapp", "chrys");
+  }
+  if (process.env.XDG_DATA_HOME) {
+    return path.join(process.env.XDG_DATA_HOME, "pyapp", "chrys");
+  }
+  return path.join(os.homedir(), ".local", "share", "pyapp", "chrys");
+}
+
+const binaryPreparations = new Map<string, Promise<void>>();
+
+async function invalidatePyappCacheIfBinaryChanged(context: vscode.ExtensionContext, binaryPath: string): Promise<void> {
+  const existing = binaryPreparations.get(binaryPath);
+  if (existing) return existing;
+  const preparation = prepareBinaryCache(context, binaryPath);
+  binaryPreparations.set(binaryPath, preparation);
+  try { await preparation; }
+  catch (error) { binaryPreparations.delete(binaryPath); throw error; }
+}
+
+async function prepareBinaryCache(context: vscode.ExtensionContext, binaryPath: string): Promise<void> {
+  const hash = crypto.createHash("sha256").update(await fs.promises.readFile(binaryPath)).digest("hex");
+  const stateKey = "chrys.pyappBinaryHash";
+  const previousHash = context.globalState.get<string>(stateKey);
+  if (previousHash === hash) return;
+
+  const cacheDir = pyappCacheDir();
+  await fs.promises.rm(cacheDir, { recursive: true, force: true });
+  await context.globalState.update(stateKey, hash);
+  logInfo(`Invalidated PyApp cache for updated iCode binary (${hash.slice(0, 12)}).`);
+}
+
+async function resolveInitialCwd(): Promise<string | null> {
+  const activeFile = vscode.window.activeTextEditor?.document.uri;
+  const activeWorkspace = activeFile?.scheme === "file" ? vscode.workspace.getWorkspaceFolder(activeFile) : undefined;
+  const resolved = initialWorkspacePath({
+    activeWorkspacePath: activeWorkspace?.uri.fsPath,
+    firstWorkspacePath: vscode.workspace.workspaceFolders?.[0]?.uri.fsPath,
+    activeFilePath: activeFile?.scheme === "file" ? activeFile.fsPath : undefined,
+  });
+  if (resolved) return resolved;
+
+  const selected = await vscode.window.showOpenDialog({
+    canSelectFiles: false,
+    canSelectFolders: true,
+    canSelectMany: false,
+    defaultUri: vscode.Uri.file(os.homedir()),
+    title: nativeText("Select iCode workspace directory", "选择 iCode 工作区目录"),
+  });
+  return selected?.[0]?.fsPath ?? null;
+}
+
+// ──────────────────────────────────────────────
+// On connected — initialize and restore session
+// ──────────────────────────────────────────────
+
+async function onConnected(
+  context: vscode.ExtensionContext,
+  client: import("./acp/client").ChrysAcpClient,
+): Promise<void> {
+  // Initialize ACP
+  const initResp = await withTimeout(
+    client.initialize(PROTOCOL_VERSION, {
+      name: "icode-vscode-plugin",
+      version: PACKAGE_VERSION,
+    }),
+    ACP_INITIALIZE_TIMEOUT_MS,
+    nativeText(
+      `initialize did not respond within ${ACP_INITIALIZE_TIMEOUT_MS / 1000}s`,
+      `initialize 在 ${ACP_INITIALIZE_TIMEOUT_MS / 1000} 秒内没有响应`,
+    ),
+  );
+  rt.restartAttempts = 0;
+  rt.currentPromptCapabilities = initResp.agentCapabilities?.promptCapabilities ?? null;
+  rt.chrysCliVersion = initResp.agentInfo?.version || "";
+  logInfo(`ACP initialized with protocol ${initResp.protocolVersion}${rt.chrysCliVersion ? `, iCode CLI ${rt.chrysCliVersion}` : ""}`);
+
+  // Check protocol version
+  if (initResp.protocolVersion !== PROTOCOL_VERSION) {
+    vscode.window.showWarningMessage(
+      `iCode protocol version ${initResp.protocolVersion} differs from expected ${PROTOCOL_VERSION}. Some features may not work.`,
+    );
+  }
+
+  // Create session manager
+  rt.sessionManager = new SessionManager(client);
+
+  ensureSessionTree(context);
+
+  // Create approval handler
+  rt.approvalHandler = new ApprovalHandler(() => ensureChatPanel(context, true), () => rt.currentCwd);
+  client.onRequestPermission(bindRuntime((req) => rt.approvalHandler.requestPermission(req)));
+
+  // Create ask_user handler
+  rt.askUserHandler = new AskUserHandler(() => ensureChatPanel(context, true));
+  client.onRequestInput(bindRuntime((req) => rt.askUserHandler.requestInput(req)));
+
+  // Wire up notification handlers from modules
+  const {
+    handleRuntimeUpdate,
+    handleChrysError,
+    handleChrysWarning,
+    handleSessionRestored,
+    handleContextCompressed,
+    handleContextPressure,
+    handleToolCompacted,
+    handleRichUsageUpdate,
+    handleAgentLoadEvent,
+    handleApprovalReviewed,
+    handleProfileSwitched,
+    handleWorkspaceUpdated,
+    handleUserInjectResult,
+    handleRollbackResult,
+    handleSubAgentEvent,
+    handleCompactionNotification,
+  } = await import("./handlers/notifications");
+
+  client.onRuntimeUpdate(bindRuntime((update) => handleRuntimeUpdate(update)));
+  client.onError(bindRuntime((update) => handleChrysError(update)));
+  client.onWarning(bindRuntime((update) => handleChrysWarning(update)));
+  client.onSessionRestored(bindRuntime((update) => handleSessionRestored(update)));
+  client.onContextCompressed(bindRuntime((update) => handleContextCompressed(update)));
+  client.onContextPressure(bindRuntime((update) => handleContextPressure(update)));
+  client.onToolCompacted(bindRuntime((update) => handleToolCompacted(update)));
+  client.onUsageUpdate(bindRuntime((update) => handleRichUsageUpdate(update)));
+  client.onAgentLoad(bindRuntime((eventName, update) => handleAgentLoadEvent(eventName, update)));
+  client.onApprovalReviewed(bindRuntime((update) => handleApprovalReviewed(update)));
+  client.onProfileSwitched(bindRuntime((update) => handleProfileSwitched(update)));
+  client.onWorkspaceUpdated(bindRuntime((update) => handleWorkspaceUpdated(update)));
+  client.onUserInjectResult(bindRuntime((update) => handleUserInjectResult(update)));
+  client.onRollbackResult(bindRuntime((update) => handleRollbackResult(update)));
+  client.onCompaction(bindRuntime((eventName, update) => handleCompactionNotification(eventName, update)));
+  client.onApprovalModeUpdate(bindRuntime((update) => {
+    if (update.mode) rt.currentApprovalMode = update.mode;
+    rt.chatPanel?.setState(chatPanelState());
+  }));
+  client.onSubAgent(bindRuntime((eventName, update) => handleSubAgentEvent(eventName, update)));
+
+  // Keep closed tabs closed when reconnecting in the background.
+
+  // Listen for session updates
+  client.onSessionUpdate(bindRuntime((sessionId, update) => {
+    handleSessionUpdate(sessionId, update);
+  }));
+
+  rt.sessionInitialization = initializeActiveSession(context);
+  try {
+    await rt.sessionInitialization;
+  } finally {
+    rt.sessionInitialization = null;
+  }
+
+}
+
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(message)), timeoutMs);
+  });
+  return Promise.race([promise, timeout]).finally(() => {
+    if (timer) clearTimeout(timer);
+  });
+}
+
+async function initializeActiveSession(context: vscode.ExtensionContext): Promise<void> {
+  if (!rt.sessionManager) return;
+  // Try to restore session from workspace state
+  const savedState = rt.restoreSession ?? (!rt.skipRestoreOnce ? context.workspaceState.get<{ sessionId: string; cwd: string }>("chrys.session") : undefined);
+  if (savedState && savedState.cwd === rt.currentCwd) {
+    try {
+      recordLifecycleEvent("SessionRestoreStarted", `${sessionShortId(savedState.sessionId)} @ ${savedState.cwd}`);
+      rt.currentSessionId = savedState.sessionId;
+      resetRenderState(true);
+      rt.transcript.clearMessages();
+      await rt.sessionManager.loadSession(rt.currentCwd!, savedState.sessionId);
+      rt.currentSessionId = savedState.sessionId;
+      rt.persistCurrentSession();
+      await refreshRuntimeSnapshot();
+      rt.chatPanel?.setState(chatPanelState());
+      recordLifecycleEvent("SessionRestoreSucceeded", sessionShortId(savedState.sessionId));
+      return;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      recordLifecycleEvent("SessionRestoreFailed", `${sessionShortId(savedState.sessionId)}: ${message}`);
+      rt.clearPersistedSession();
+      rt.currentSessionId = null;
+      rt.transcript.appendMessage({
+        id: nextMessageId(),
+        kind: "separator",
+        text: nativeText(
+          `Previous iCode session ${sessionShortId(savedState.sessionId)} could not be restored. Start a new session or pick another saved session.`,
+          `之前的 iCode 会话 ${sessionShortId(savedState.sessionId)} 无法恢复。可以新建会话，或从会话列表选择其他会话。`,
+        ),
+        timestamp: Date.now(),
+      });
+    }
+  }
+  rt.skipRestoreOnce = false;
+
+  // Keep startup cheap: opening iCode should not create a persisted session.
+  // The first prompt or explicit New Session action owns session creation.
+  rt.currentSessionId = null;
+  rt.chatPanel?.setState(chatPanelState());
+  recordLifecycleEvent("SessionStartupIdle", rt.currentCwd ?? "(no workspace)");
+}
+
+export function ensureChatPanel(context: vscode.ExtensionContext, preserveFocus = false): ChatPanel {
+  if (!rt.chatPanel) {
+    const panel = rt.chatPanel = new ChatPanel(context, preserveFocus);
+
+    // Lazily import action handlers to avoid circular deps
+    const initActions = async () => {
+      const { handleSendMessage, handleCancel, handleWebviewCommand } = await import("./handlers/actions");
+      if (rt.chatPanel !== panel) return;
+      panel.onSendMessage((text, blocks) => {
+        void handleSendMessage(text, blocks).catch((error) => logError(`Send message failed: ${String(error)}`));
+      });
+      panel.onCancel(() => {
+        void handleCancel().catch((error) => logError(`Cancel failed: ${String(error)}`));
+      });
+      panel.onCommand((command, arg) => {
+        handleWebviewCommand(command, arg).catch((error) => {
+          const message = error instanceof Error ? error.message : String(error);
+          logError(`Webview command failed (${command}): ${message}`);
+        });
+      });
+    };
+    initActions().catch((error) => {
+      logError(`Action handler initialization failed: ${error instanceof Error ? error.message : String(error)}`);
+    });
+
+    rt.chatPanel.onSessionsSidebarRequest((action, payload) => {
+      import("./ui/dialogs").then(({ handleSessionsSidebarRequest }) => handleSessionsSidebarRequest(action, payload)).catch((error) => logError(String(error)));
+    });
+
+    rt.chatPanel.onSleepSkip((toolCallId) => {
+      import("./handlers/actions").then(({ handleSleepSkip }) => {
+        handleSleepSkip(toolCallId).catch(() => {});
+      });
+    });
+
+    rt.chatPanel.onInlineDialogAction((action, payload) => {
+      import("./ui/dialogs").then(({ handleInlineDialogAction }) => {
+        handleInlineDialogAction(action, payload).catch((error) => {
+          const message = error instanceof Error ? error.message : String(error);
+          logError(`Inline dialog action failed: ${message}`);
+        });
+      });
+    });
+
+
+    rt.chatPanel.onToolDiff((toolCallId: string) => {
+      import("./ui/dialogs").then(({ openToolDiff: openToolDiffFn }) => {
+        openToolDiffFn(toolCallId).catch(() => {});
+      });
+    });
+
+    rt.chatPanel.onModelDialogSave((model) => {
+      import("./ui/dialogs").then(({ saveModelFromDialog }) => {
+        saveModelFromDialog(model).catch(() => {});
+      });
+    });
+
+    rt.chatPanel.onModelDialogDelete((id) => {
+      import("./ui/dialogs").then(({ deleteModelFromDialog }) => {
+        deleteModelFromDialog(id).catch(() => {});
+      });
+    });
+
+    rt.chatPanel.onModelDialogSetActive((id) => {
+      import("./ui/dialogs").then(({ setActiveModelFromDialog }) => {
+        setActiveModelFromDialog(id).catch(() => {});
+      });
+    });
+
+    rt.chatPanel.onApprovalModeSelect((mode) => {
+      import("./ui/dialogs").then(({ setApprovalMode }) => {
+        setApprovalMode(mode).catch((error) => {
+          const message = error instanceof Error ? error.message : String(error);
+          logError(`Approval mode select failed: ${message}`);
+        });
+      });
+    });
+
+    rt.chatPanel.onApprovalDialogDecision((optionId, reason) => {
+      rt.approvalHandler?.resolve(optionId, reason);
+    });
+
+    rt.chatPanel.onAskUserDialogResponse((requestId, answers, cancelled, source) => {
+      rt.askUserHandler?.resolve(requestId, answers, cancelled, source);
+    });
+
+    rt.chatPanel.onOpenFile((filePath, line) => {
+      import("./ui/dialogs").then(({ openWorkspaceFile }) => {
+        openWorkspaceFile(filePath, line).catch((error) => {
+          const message = error instanceof Error ? error.message : String(error);
+          logError(`Open file failed: ${message}`);
+        });
+      });
+    });
+
+    rt.chatPanel.onModelDialogRefresh(() => {
+      import("./ui/dialogs").then(({ refreshModelDialog }) => {
+        refreshModelDialog().catch(() => {});
+      });
+    });
+
+    rt.chatPanel.onAgentDialogSave((agent) => {
+      import("./ui/dialogs").then(({ saveAgentFromDialog }) => {
+        saveAgentFromDialog(agent).catch(() => {});
+      });
+    });
+
+    rt.chatPanel.onAgentDialogDelete((name) => {
+      import("./ui/dialogs").then(({ deleteAgentFromDialog }) => {
+        deleteAgentFromDialog(name).catch(() => {});
+      });
+    });
+
+    rt.chatPanel.onAgentDialogSetActive((name) => {
+      import("./ui/dialogs").then(({ setActiveAgentFromDialog }) => {
+        setActiveAgentFromDialog(name).catch(() => {});
+      });
+    });
+
+    rt.chatPanel.onAgentDialogRefresh(() => {
+      import("./ui/dialogs").then(({ refreshAgentDialog }) => {
+        refreshAgentDialog().catch(() => {});
+      });
+    });
+  }
+  rt.chatPanel.setState(chatPanelState());
+  return rt.chatPanel;
+}
+
+// ──────────────────────────────────────────────
+// Commands
+// ──────────────────────────────────────────────
+
+/** One live runtime per session, even if its editor tab is temporarily closed. */
+export async function openSessionTab(session?: Pick<SessionInfo, "sessionId" | "cwd">, agentName?: string): Promise<boolean> {
+  const context = rt.extensionContext;
+  const cwd = session?.cwd || rt.currentCwd;
+  if (!context || !cwd) {
+    recordLifecycleEvent("NewSessionUnavailable", "workspace missing");
+    vscode.window.showWarningMessage(nativeText("iCode cannot start a new session without a workspace.", "请先选择工作区，再新建 iCode 会话。"));
+    return false;
+  }
+  const existing = session && findSessionRuntime(session.sessionId);
+  if (existing) {
+    return withRuntime(existing, () => {
+      focusRuntime(existing);
+      ensureChatPanel(context).reveal();
+      rt.chatPanel?.setState(chatPanelState());
+      return true;
+    });
+  }
+  // Reserve the identity synchronously, before warm-up, to deduplicate double-clicks.
+  const owner = createSessionRuntime(cwd);
+  if (agentName) owner.activeAgentName = owner.preferredAgentName = agentName;
+  if (session) owner.restoreSession = { sessionId: session.sessionId, cwd };
+  focusRuntime(owner);
+  const opening = withRuntime(owner, async () => {
+    recordLifecycleEvent("SessionNewStarted", session?.sessionId ?? cwd);
+    ensureChatPanel(context).reveal();
+    if (!(await connectBackend(context, owner.currentBinaryPath ?? undefined))) return false;
+    if (session) return owner.currentSessionId === session.sessionId;
+    try {
+      owner.currentSessionId = await owner.sessionManager.newSession(cwd);
+      recordLifecycleEvent("SessionNewSucceeded", owner.currentSessionId);
+      await applyPreferredDefaultsToNewSession();
+      await refreshRuntimeSnapshot();
+      owner.persistCurrentSession();
+      owner.sessionTreeProvider?.refresh();
+      owner.chatPanel?.setState(chatPanelState());
+      return true;
+    } catch (error) {
+      logError(`New session failed: ${String(error)}`);
+      setConnectionState("error", String(error));
+      return false;
+    }
+  });
+  owner.tabInitialization = opening;
+  try { return await opening; }
+  finally { owner.tabInitialization = null; }
+}
+
+function registerSessionCommand(command: string, handler: (...args: any[]) => any): vscode.Disposable {
+  return vscode.commands.registerCommand(command, (...args: any[]) => {
+    const owner = currentRuntime();
+    return withRuntime(owner, () => handler(...args));
+  });
+}
+
+function registerCommands(context: vscode.ExtensionContext): void {
+  context.subscriptions.push(registerSessionCommand("chrys.focusChat", () => {
+    if (!rt.extensionContext) return;
+    ensureChatPanel(rt.extensionContext).reveal();
+    rt.chatPanel?.setState(chatPanelState());
+  }));
+
+  context.subscriptions.push(registerSessionCommand("chrys.renameSession", async (
+    item?: { sessionInfo?: SessionInfo },
+  ) => {
+    const { renameSessionLocally } = await import("./ui/sessionName");
+    await renameSessionLocally(item?.sessionInfo?.sessionId ?? rt.currentSessionId, undefined, item?.sessionInfo?.title);
+  }));
+
+  context.subscriptions.push(registerSessionCommand("chrys.showPromptHistory", async () => {
+    const { showPromptHistory } = await import("./ui/promptHistory");
+    ensureChatPanel(context).reveal();
+    await showPromptHistory();
+  }));
+
+  context.subscriptions.push(registerSessionCommand("chrys.newSession", () => openSessionTab()));
+
+  context.subscriptions.push(registerSessionCommand("chrys.selectAgent", async () => {
+    await selectAgentForNewSession();
+  }));
+
+  context.subscriptions.push(registerSessionCommand("chrys.listSessions", async () => {
+    if (!rt.sessionManager) {
+      rt.chatPanel?.appendDebugEvent("ListSessionsUnavailable", "session manager missing");
+      const openDoctor = nativeText("Open Doctor", "打开健康检查");
+      const selected = await vscode.window.showWarningMessage(
+        nativeText("iCode sessions are unavailable until the ACP runtime is connected.", "需要连接 iCode ACP 运行时后才能查看会话。"),
+        openDoctor,
+      );
+      if (selected === openDoctor) {
+        await vscode.commands.executeCommand("chrys.doctor");
+      }
+      return;
+    }
+    if (!rt.currentCwd) {
+      rt.chatPanel?.appendDebugEvent("ListSessionsUnavailable", "workspace missing");
+      vscode.window.showWarningMessage(nativeText("Select a iCode workspace before listing sessions.", "请先选择 iCode 工作区，再查看会话。"));
+      return;
+    }
+    let sessions: SessionInfo[];
+    try {
+      sessions = withLocalSessionNames(await rt.sessionManager.listSessions(rt.currentCwd), rt.extensionContext?.workspaceState);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      logError(`List sessions command failed: ${message}`);
+      rt.chatPanel?.appendDebugEvent("ListSessionsFailed", message);
+      const openDoctor = nativeText("Open Doctor", "打开健康检查");
+      const selected = await vscode.window.showWarningMessage(
+        nativeText(`Unable to list iCode sessions: ${message}`, `无法列出 iCode 会话：${message}`),
+        openDoctor,
+      );
+      if (selected === openDoctor) {
+        await vscode.commands.executeCommand("chrys.doctor");
+      }
+      return;
+    }
+    if (!sessions.length) {
+      rt.chatPanel?.appendDebugEvent("ListSessions", "0 sessions");
+      vscode.window.showInformationMessage(nativeText("No saved iCode sessions for this workspace.", "这个工作区暂无已保存的 iCode 会话。"));
+      return;
+    }
+    const items = sessions.map((s) => sessionQuickPickItem(s));
+
+    rt.chatPanel?.appendDebugEvent("ListSessions", `${sessions.length} sessions`);
+    const selected = await vscode.window.showQuickPick(items, {
+      title: nativeText("iCode Sessions", "iCode 会话"),
+      placeHolder: nativeText("Select a session to resume", "选择要恢复的会话"),
+      matchOnDescription: true,
+      matchOnDetail: true,
+    });
+    if (!selected) return;
+
+    const { loadSavedSession } = await import("./ui/dialogs");
+    await loadSavedSession({ sessionId: selected.sessionId, cwd: selected.cwd });
+  }));
+
+  context.subscriptions.push(registerSessionCommand("chrys.sendPrompt", () => {
+    rt.chatPanel?.reveal();
+  }));
+
+  context.subscriptions.push(registerSessionCommand("chrys.fillComposer", (args?: { text?: string; agent?: string }) => {
+    if (!rt.extensionContext) return;
+    if (args?.agent && BUILTIN_AGENTS.includes(args.agent)) {
+      rt.activeAgentName = args.agent;
+    }
+    ensureChatPanel(rt.extensionContext).reveal();
+    if (args?.text) {
+      rt.chatPanel?.setComposer(args.text);
+    }
+    rt.chatPanel?.setState(chatPanelState());
+  }));
+
+  context.subscriptions.push(registerSessionCommand("chrys.sendText", async (args?: { text?: string; agent?: string }) => {
+    if (!rt.extensionContext || !args?.text) return;
+    if (args?.agent && BUILTIN_AGENTS.includes(args.agent)) {
+      rt.activeAgentName = args.agent;
+    }
+    ensureChatPanel(rt.extensionContext).reveal();
+    const { handleSendMessage } = await import("./handlers/actions");
+    await handleSendMessage(args.text, [{ type: "text", text: args.text }]);
+    rt.chatPanel?.setState(chatPanelState());
+  }));
+
+  context.subscriptions.push(registerSessionCommand("chrys.showLogs", () => {
+    rt.outputChannel?.show();
+  }));
+
+  context.subscriptions.push(registerSessionCommand("chrys.runtimeDetails", async () => {
+    const { showRuntimeDetails } = await import("./ui/dialogs");
+    await showRuntimeDetails();
+  }));
+
+  context.subscriptions.push(registerSessionCommand("chrys.showDiff", async () => {
+    const { showSessionDiff } = await import("./ui/dialogs");
+    await showSessionDiff();
+  }));
+
+  context.subscriptions.push(registerSessionCommand("chrys.rollback", async () => {
+    const { rollbackSession } = await import("./ui/dialogs");
+    await rollbackSession();
+  }));
+
+  context.subscriptions.push(registerSessionCommand("chrys.retrySubAgent", async () => {
+    const { retryPausedSubAgent } = await import("./ui/dialogs");
+    await retryPausedSubAgent();
+  }));
+
+  context.subscriptions.push(registerSessionCommand("chrys.abortSubAgent", async () => {
+    const { abortPausedSubAgent } = await import("./ui/dialogs");
+    await abortPausedSubAgent();
+  }));
+
+  context.subscriptions.push(registerSessionCommand("chrys.setApprovalMode", async () => {
+    const { setApprovalMode } = await import("./ui/dialogs");
+    await setApprovalMode();
+  }));
+
+  context.subscriptions.push(registerSessionCommand("chrys.switchAgent", async () => {
+    const { switchActiveAgent } = await import("./ui/dialogs");
+    await switchActiveAgent();
+  }));
+
+  context.subscriptions.push(registerSessionCommand("chrys.showAgentProfiles", async () => {
+    const { showAgentProfiles } = await import("./ui/dialogs");
+    await showAgentProfiles();
+  }));
+
+  context.subscriptions.push(registerSessionCommand("chrys.showModelProfiles", async () => {
+    const { showModelProfiles } = await import("./ui/dialogs");
+    await showModelProfiles();
+  }));
+
+  context.subscriptions.push(registerSessionCommand("chrys.reloadSettings", async () => {
+    const { reloadChrysSettings } = await import("./ui/dialogs");
+    await reloadChrysSettings();
+  }));
+
+  context.subscriptions.push(registerSessionCommand("chrys.changeWorkspace", async () => {
+    const { changeWorkspace } = await import("./ui/dialogs");
+    await changeWorkspace();
+  }));
+
+  context.subscriptions.push(registerSessionCommand("chrys.showStructuredHistory", async () => {
+    const { showStructuredHistory } = await import("./ui/dialogs");
+    await showStructuredHistory();
+  }));
+
+  context.subscriptions.push(registerSessionCommand("chrys.setModelProfile", async () => {
+    const { setModelProfile } = await import("./ui/dialogs");
+    await setModelProfile();
+  }));
+
+  context.subscriptions.push(registerSessionCommand("chrys.createModelProfile", async () => {
+    const { createModelProfile } = await import("./ui/dialogs");
+    await createModelProfile();
+  }));
+
+  context.subscriptions.push(registerSessionCommand("chrys.deleteModelProfile", async () => {
+    const { deleteModelProfile } = await import("./ui/dialogs");
+    await deleteModelProfile();
+  }));
+
+  context.subscriptions.push(registerSessionCommand("chrys.deleteAgentProfile", async () => {
+    const { deleteAgentProfile } = await import("./ui/dialogs");
+    await deleteAgentProfile();
+  }));
+
+  context.subscriptions.push(registerSessionCommand("chrys.testMcpServer", async () => {
+    const { testMcpServer } = await import("./ui/dialogs");
+    await testMcpServer();
+  }));
+
+  context.subscriptions.push(registerSessionCommand("chrys.setConfigOption", async () => {
+    const { setConfigOption } = await import("./ui/dialogs");
+    await setConfigOption();
+  }));
+
+  context.subscriptions.push(registerSessionCommand("chrys.manage", async () => {
+    const { showManagementPanel } = await import("./ui/management");
+    await showManagementPanel();
+  }));
+
+  context.subscriptions.push(registerSessionCommand("chrys.manageModels", async () => {
+    const { openModelDialog } = await import("./ui/dialogs");
+    await openModelDialog();
+  }));
+
+  context.subscriptions.push(registerSessionCommand("chrys.manageAgents", async () => {
+    const { openAgentDialog } = await import("./ui/dialogs");
+    await openAgentDialog();
+  }));
+
+  context.subscriptions.push(registerSessionCommand("chrys.pickTheme", async () => {
+    const { pickThemeFromList } = await import("./ui/dialogs");
+    await pickThemeFromList();
+  }));
+
+  context.subscriptions.push(registerSessionCommand("chrys.pickLanguage", async () => {
+    const { pickLanguageFromList } = await import("./ui/dialogs");
+    await pickLanguageFromList();
+  }));
+
+  context.subscriptions.push(registerSessionCommand("chrys.showNotifications", () => {
+    if (!rt.extensionContext) return;
+    ensureChatPanel(rt.extensionContext).showNotifications();
+  }));
+
+  context.subscriptions.push(registerSessionCommand("chrys.diagnostics", async () => {
+    const { showDiagnosticsReport } = await import("./ui/dialogs");
+    await showDiagnosticsReport();
+  }));
+
+  context.subscriptions.push(registerSessionCommand("chrys.copySupportBundle", async () => {
+    const { copySupportBundle } = await import("./ui/dialogs");
+    await copySupportBundle();
+  }));
+
+  context.subscriptions.push(registerSessionCommand("chrys.doctor", async () => {
+    const { runDoctor } = await import("./ui/dialogs");
+    await runDoctor();
+  }));
+
+  context.subscriptions.push(registerSessionCommand("chrys.loadSessionFromTree", async (sessionId: string, sessionCwd?: string) => {
+    if (!sessionId) return;
+    const { loadSavedSession } = await import("./ui/dialogs");
+    await loadSavedSession({ sessionId, cwd: sessionCwd || "" });
+  }));
+
+  context.subscriptions.push(registerSessionCommand("chrys.openSessionJsonFromTree", async (
+    sessionIdOrItem: string | { sessionInfo?: SessionInfo },
+    sessionCwd?: string,
+  ) => {
+    const session = sessionFromTreeArg(sessionIdOrItem, sessionCwd);
+    if (!session?.sessionId) return;
+    const sourcePath = findSessionJsonPath(session.sessionId);
+    if (!sourcePath) {
+      vscode.window.showWarningMessage(nativeText("Local session.json was not found for this session.", "未找到这个会话的本地 session.json。"));
+      return;
+    }
+    const doc = await vscode.workspace.openTextDocument(vscode.Uri.file(sourcePath));
+    await vscode.window.showTextDocument(doc, { preview: false });
+    rt.chatPanel?.appendDebugEvent("SessionJsonOpened", sourcePath);
+  }));
+
+  context.subscriptions.push(registerSessionCommand("chrys.copySessionJsonPathFromTree", async (
+    sessionIdOrItem: string | { sessionInfo?: SessionInfo },
+    sessionCwd?: string,
+  ) => {
+    const session = sessionFromTreeArg(sessionIdOrItem, sessionCwd);
+    if (!session?.sessionId) return;
+    const sourcePath = findSessionJsonPath(session.sessionId);
+    if (!sourcePath) {
+      vscode.window.showWarningMessage(nativeText("Local session.json was not found for this session.", "未找到这个会话的本地 session.json。"));
+      return;
+    }
+    await vscode.env.clipboard.writeText(sourcePath);
+    vscode.window.showInformationMessage(nativeText("Session JSON path copied.", "会话 JSON 路径已复制。"));
+  }));
+
+  context.subscriptions.push(registerSessionCommand("chrys.copySessionIdFromTree", async (
+    sessionIdOrItem: string | { sessionInfo?: SessionInfo },
+    sessionCwd?: string,
+  ) => {
+    const session = sessionFromTreeArg(sessionIdOrItem, sessionCwd);
+    if (!session?.sessionId) return;
+    await vscode.env.clipboard.writeText(session.sessionId);
+    vscode.window.showInformationMessage(nativeText("Session ID copied.", "会话 ID 已复制。"));
+  }));
+
+  context.subscriptions.push(registerSessionCommand("chrys.copySessionSummaryFromTree", async (
+    sessionIdOrItem: string | { sessionInfo?: SessionInfo },
+    sessionCwd?: string,
+  ) => {
+    const session = sessionFromTreeArg(sessionIdOrItem, sessionCwd);
+    if (!session?.sessionId) return;
+    await vscode.env.clipboard.writeText(sessionTreeDebugSummary(session));
+    vscode.window.showInformationMessage(nativeText("Session summary copied.", "会话摘要已复制。"));
+    rt.chatPanel?.appendDebugEvent("SessionSummaryCopied", sessionShortId(session.sessionId));
+  }));
+
+  context.subscriptions.push(registerSessionCommand("chrys.deleteSessionFromTree", async (
+    sessionIdOrItem: string | { sessionInfo?: SessionInfo },
+    sessionCwd?: string,
+  ) => {
+    const session = sessionFromTreeArg(sessionIdOrItem, sessionCwd);
+    if (!session?.sessionId) return;
+    await deleteSessionById(session.sessionId, session.cwd);
+  }));
+
+  context.subscriptions.push(registerSessionCommand("chrys.refreshSessionTree", () => {
+    rt.sessionTreeProvider?.refresh();
+  }));
+}
+
+function ensureSessionTree(context: vscode.ExtensionContext): void {
+  if (!rt.sessionTreeProvider) {
+    rt.sessionTreeProvider = new SessionTreeProvider(
+      () => rt.sessionManager,
+      () => rt.currentCwd,
+      () => rt.currentSessionId,
+    );
+    const treeView = vscode.window.createTreeView("chrys-sessions", {
+      treeDataProvider: rt.sessionTreeProvider,
+      showCollapseAll: true,
+    });
+    context.subscriptions.push(treeView);
+  } else {
+    rt.sessionTreeProvider.refresh();
+  }
+}
+
+async function showCommandUnavailable(eventName: string, commandName: string, detail: string, message: string): Promise<void> {
+  rt.chatPanel?.appendDebugEvent(eventName, detail);
+  logWarn(`${commandName} unavailable: ${detail}`);
+  const openDoctor = nativeText("Open Doctor", "打开健康检查");
+  const selected = await vscode.window.showWarningMessage(message, openDoctor);
+  if (selected === openDoctor) {
+    await vscode.commands.executeCommand("chrys.doctor");
+  }
+}
+
+async function selectAgentForNewSession(): Promise<void> {
+  if (!rt.currentBinaryPath) {
+    await showCommandUnavailable(
+      SELECT_AGENT_UNAVAILABLE_EVENT,
+      "SelectAgent",
+      "binary missing",
+      nativeText("iCode cannot switch agents until the iCode binary is resolved.", "需要先解析 iCode 可执行文件，才能切换智能体。"),
+    );
+    return;
+  }
+  if (!rt.currentCwd) {
+    await showCommandUnavailable(
+      SELECT_AGENT_UNAVAILABLE_EVENT,
+      "SelectAgent",
+      "workspace missing",
+      nativeText("Select a iCode workspace before switching agents.", "请先选择 iCode 工作区，再切换智能体。"),
+    );
+    return;
+  }
+  if (!rt.currentSessionId && rt.sessionManager?.state && rt.sessionManager.state !== "idle") {
+    const message = nativeText(
+      "iCode cannot switch agents for a new session while the current task is running. Interrupt or wait for it to finish.",
+      "当前任务运行时不能为新会话切换 iCode 智能体。请先中断或等待任务完成。",
+    );
+    vscode.window.showInformationMessage(message);
+    rt.chatPanel?.appendDebugEvent("SelectAgentBlocked", rt.sessionManager.state);
+    return;
+  }
+  if (!rt.processManager) {
+    await showCommandUnavailable(
+      SELECT_AGENT_UNAVAILABLE_EVENT,
+      "SelectAgent",
+      "process manager missing",
+      nativeText("iCode cannot switch agents until the ACP process manager is ready.", "需要 ACP 进程管理器就绪后才能切换智能体。"),
+    );
+    return;
+  }
+  const selected = await vscode.window.showQuickPick(
+    BUILTIN_AGENTS.map((agent) => ({
+      label: agent,
+      description: agent === rt.activeAgentName ? nativeText("current", "当前") : "",
+    })),
+    { placeHolder: nativeText("Select the iCode agent for a new session", "为新会话选择 iCode 智能体") },
+  );
+  if (!selected || selected.label === rt.activeAgentName) return;
+
+  const switchAgentLabel = nativeText("Switch Agent", "切换智能体");
+  const confirmed = await vscode.window.showWarningMessage(
+    nativeText(
+      `Switch to ${selected.label}? This starts a new iCode ACP process and creates a new session.`,
+      `切换到 ${selected.label}？这会启动新的 iCode ACP 进程并创建新会话。`,
+    ),
+    { modal: true },
+    switchAgentLabel,
+  );
+  if (confirmed !== switchAgentLabel) return;
+
+  if (rt.currentSessionId) {
+    await openSessionTab(undefined, selected.label);
+    return;
+  }
+
+  rt.activeAgentName = selected.label;
+  rememberPreferredAgent(selected.label);
+  rt.skipRestoreOnce = true;
+  rt.currentSessionId = null;
+  resetRenderState(true);
+  rt.transcript.clearMessages();
+  await rt.dropSession();
+  rt.clearPersistedSession();
+  if (rt.extensionContext) await restartBackendConnection(rt.extensionContext, rt.currentBinaryPath);
+}
+
+export async function deleteSessionById(sessionId: string, cwd?: string): Promise<void> {
+  const owner = findSessionRuntime(sessionId);
+  if (owner && owner !== currentRuntime()) return withRuntime(owner, () => deleteSessionById(sessionId, cwd));
+  const sessionCwd = cwd || rt.currentCwd;
+  if (!rt.sessionManager || !sessionCwd || !sessionId) return;
+  const deletingCurrent = rt.currentSessionId === sessionId;
+  if (deletingCurrent && rt.sessionManager.state !== "idle") {
+    const message = nativeText(
+      "iCode cannot delete the current session while a task is running. Interrupt or wait for it to finish.",
+      "当前任务运行时不能删除当前 iCode 会话。请先中断或等待任务完成。",
+    );
+    vscode.window.showWarningMessage(message);
+    rt.chatPanel?.appendDebugEvent("SessionDeleteBlocked", rt.sessionManager.state);
+    return;
+  }
+  const deleteLabel = nativeText("Delete", "删除");
+  const confirmed = await vscode.window.showWarningMessage(
+    nativeText("Delete this iCode session? This cannot be undone.", "删除这个 iCode 会话？此操作无法撤销。"),
+    { modal: true },
+    deleteLabel,
+  );
+  if (confirmed !== deleteLabel) return;
+  // Opening the saved session while confirmation was pending changes its owner.
+  // Leave it intact so this stale dialog cannot delete a newly opened live tab.
+  if (findSessionRuntime(sessionId) !== owner) return;
+  // The confirmation is asynchronous; the target may have started another turn.
+  if (deletingCurrent && (rt.currentSessionId !== sessionId || rt.sessionManager.state !== "idle")) return;
+
+  try {
+    await rt.sessionManager.deleteSession(sessionCwd, sessionId);
+    if (rt.extensionContext?.workspaceState) await setLocalSessionName(rt.extensionContext.workspaceState, sessionId, "").catch(error => logWarn(`Local session name cleanup failed: ${String(error)}`));
+    logInfo(`Deleted session ${sessionId}`);
+    rt.chatPanel?.appendDebugEvent("SessionDeleted", sessionId);
+    if (deletingCurrent) {
+      rt.currentSessionId = null;
+      resetRenderState(true);
+      rt.transcript.clearMessages();
+      rt.currentCwd = sessionCwd;
+      rt.clearPersistedSession();
+      rt.chatPanel?.setState(chatPanelState());
+    }
+    rt.sessionTreeProvider?.refresh();
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    logError(`Delete session failed: ${message}`);
+    vscode.window.showErrorMessage(nativeText(`Failed to delete iCode session: ${message}`, `删除 iCode 会话失败：${message}`));
+  }
+}
+
+function sessionFromTreeArg(
+  sessionIdOrItem: string | { sessionInfo?: SessionInfo },
+  sessionCwd?: string,
+): SessionInfo | Pick<SessionInfo, "sessionId" | "cwd"> | undefined {
+  return typeof sessionIdOrItem === "string"
+    ? { sessionId: sessionIdOrItem, cwd: sessionCwd || "" }
+    : sessionIdOrItem.sessionInfo;
+}
+
+function sessionTreeDebugSummary(session: SessionInfo | Pick<SessionInfo, "sessionId" | "cwd">): string {
+  const fullSession = "updatedAt" in session ? session : undefined;
+  const sessionJsonPath = findSessionJsonPath(session.sessionId);
+  const meta = fullSession?._meta ?? {};
+  const lines = [
+    "# iCode Session Summary",
+    "",
+    `- Title: ${fullSession?.title || "(untitled)"}`,
+    `- Session ID: ${session.sessionId}`,
+    `- Short ID: ${sessionShortId(session.sessionId) || session.sessionId}`,
+    `- Current in VSIX: ${session.sessionId === rt.currentSessionId ? "yes" : "no"}`,
+    `- Workspace: ${session.cwd || "(unknown)"}`,
+    `- Updated: ${fullSession?.updatedAt ? relativeSessionTime(fullSession.updatedAt) : "(unknown)"}`,
+    `- local session.json: ${sessionJsonPath ?? "not found on this host"}`,
+  ];
+  const metaLine = fullSession ? sessionMetaLine(fullSession) : "";
+  if (metaLine) lines.push(`- Profile/model/messages: ${metaLine}`);
+  if (Object.keys(meta).length) {
+    lines.push("", "## Raw Session Metadata", "", "```json", JSON.stringify(meta, null, 2), "```");
+  }
+  return lines.join("\n");
+}
+
+type SessionQuickPickItem = vscode.QuickPickItem & {
+  sessionId: string;
+  cwd: string;
+};
+
+function sessionQuickPickItem(session: SessionInfo): SessionQuickPickItem {
+  const isCurrent = session.sessionId === rt.currentSessionId;
+  const shortId = sessionShortId(session.sessionId);
+  const title = session.title || shortId || session.sessionId;
+  const metaLine = sessionMetaLine(session);
+  const sessionJsonPath = findSessionJsonPath(session.sessionId);
+  return {
+    label: `${isCurrent ? "$(circle-filled) " : ""}${title}`,
+    description: [
+      isCurrent ? nativeText("current", "当前") : "",
+      shortId ? nativeText(`id ${shortId}`, `ID ${shortId}`) : "",
+      metaLine,
+    ].filter(Boolean).join("  "),
+    detail: [
+      nativeText(
+        `Updated: ${session.updatedAt ? relativeSessionTime(session.updatedAt) : "unknown"}`,
+        `更新时间：${session.updatedAt ? relativeSessionTime(session.updatedAt) : "未知"}`,
+      ),
+      nativeText(`Workspace: ${session.cwd}`, `工作区：${session.cwd}`),
+      nativeText(
+        `local session.json: ${sessionJsonPath ?? "not found on this host"}`,
+        `本地 session.json：${sessionJsonPath ?? "当前主机未找到"}`,
+      ),
+    ].join("\n"),
+    sessionId: session.sessionId,
+    cwd: session.cwd,
+  };
+}
+
+function sessionMetaLine(session: SessionInfo): string {
+  const meta = session._meta ?? {};
+  const messageCount = numberMeta(meta, "message_count") ?? numberMeta(meta, "messageCount");
+  return [
+    stringMeta(meta, "agentDisplayName") ?? stringMeta(meta, "agentProfile") ?? stringMeta(meta, "agent_profile") ?? stringMeta(meta, "agent") ?? stringMeta(meta, "profile"),
+    stringMeta(meta, "modelProfile") ?? stringMeta(meta, "model_profile") ?? stringMeta(meta, "model"),
+    messageCount !== undefined ? nativeText(`${messageCount} messages`, `${messageCount} 条消息`) : undefined,
+    stringMeta(meta, "sessionSizeHuman"),
+  ].filter((value): value is string => Boolean(value)).join(" · ");
+}
+
+function stringMeta(meta: Record<string, unknown>, key: string): string | undefined {
+  const value = meta[key];
+  return typeof value === "string" && value ? value : undefined;
+}
+
+function numberMeta(meta: Record<string, unknown>, key: string): number | undefined {
+  const value = meta[key];
+  return typeof value === "number" ? value : undefined;
+}
+
+function relativeSessionTime(iso: string): string {
+  const timestamp = new Date(iso).getTime();
+  if (!Number.isFinite(timestamp)) return iso;
+  const seconds = Math.max(0, Math.floor((Date.now() - timestamp) / 1000));
+  const language = resolveUiLanguage(vscode.workspace.getConfiguration("chrys").get<string>("ui.language"), vscode.env.language);
+  if (language === "zh-CN") {
+    if (seconds < 60) return "刚刚";
+    const minutes = Math.floor(seconds / 60);
+    if (minutes < 60) return `${minutes} 分钟前`;
+    const hours = Math.floor(minutes / 60);
+    if (hours < 24) return `${hours} 小时前`;
+    const days = Math.floor(hours / 24);
+    if (days < 30) return `${days} 天前`;
+    return new Date(iso).toLocaleDateString("zh-CN");
+  }
+  if (seconds < 60) return "just now";
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  if (days < 30) return `${days}d ago`;
+  return new Date(iso).toLocaleDateString();
+}
+
+// ──────────────────────────────────────────────
+// Deactivate
+// ──────────────────────────────────────────────
+
+export async function deactivate(): Promise<void> {
+  await Promise.all([...sessionRuntimes].map(owner => withRuntime(owner, async () => {
+    owner.shuttingDown = true;
+    owner.persistCurrentSession();
+    owner.approvalHandler?.resolve();
+    owner.askUserHandler?.cancelActive("extension-shutdown");
+    owner.chatPanel?.dispose();
+    owner.managementPanel?.dispose();
+    owner.closeInlineDialog();
+    await owner.dropSession();
+    await owner.processManager?.stop().catch(() => {});
+    owner.workspaceTerminal?.dispose();
+  })));
+}
+
+function setConnectionState(state: ChatConnectionState, detail = ""): void {
+  const wasPending = isPendingConnectionState(rt.connectionState);
+  const willBePending = isPendingConnectionState(state);
+  if (!wasPending && willBePending) {
+    rt.connectionStartedAt = Date.now();
+    rt.connectionDurationMs = null;
+  } else if (wasPending && !willBePending) {
+    rt.connectionDurationMs = Math.max(0, Date.now() - rt.connectionStartedAt);
+    logInfo(`ACP connection entered ${state} after ${rt.connectionDurationMs} ms.`);
+    recordLifecycleEvent("AcpConnectionSettled", `${state} in ${rt.connectionDurationMs} ms`);
+  }
+  rt.connectionState = state;
+  rt.connectionDetail = detail;
+  rt.chatPanel?.setState(chatPanelState());
+}
+
+function isPendingConnectionState(state: ChatConnectionState): boolean {
+  return state === "resolving-workspace"
+    || state === "resolving-backend"
+    || state === "starting"
+    || state === "initializing";
+}
+
+function registerConfigurationListener(context: vscode.ExtensionContext): void {
+  context.subscriptions.push(
+    vscode.workspace.onDidChangeConfiguration((event) => {
+      if (!event.affectsConfiguration("chrys")) return;
+      for (const owner of sessionRuntimes) withRuntime(owner, () => {
+        const changedConfig = vscode.workspace.getConfiguration("chrys");
+        if (
+          event.affectsConfiguration("chrys.agent.default")
+          || event.affectsConfiguration("chrys.model.profile")
+          || event.affectsConfiguration("chrys.approval.mode")
+        ) {
+          refreshPreferredDefaultsFromSettings();
+          rt.chatPanel?.appendDebugEvent(
+            "DefaultSettingsChanged",
+            `agent=${rt.preferredAgentName}; model=${rt.preferredModelProfileId || "(default)"}; approval=${rt.preferredApprovalMode}`,
+          );
+        }
+        rt.currentTheme = resolveUiTheme(changedConfig.get<string>("ui.theme"), process.env.CHRYS_THEME);
+        rt.chatPanel?.setState(chatPanelState());
+        rt.chatPanel?.appendDebugEvent("SettingsChanged", "chrys");
+        if (event.affectsConfiguration("chrys.binary.path")) {
+          void reconnectBackend(context);
+        }
+      });
+    }),
+  );
+}
+
+async function connectBackend(context: vscode.ExtensionContext, binaryOverride?: string): Promise<boolean> {
+  if (rt.connectionInitialization) return rt.connectionInitialization;
+  const operation = connectBackendOnce(context, binaryOverride);
+  rt.connectionInitialization = operation;
+  try {
+    return await operation;
+  } finally {
+    if (rt.connectionInitialization === operation) rt.connectionInitialization = null;
+  }
+}
+
+export function restartBackendConnection(
+  context: vscode.ExtensionContext,
+  binaryOverride?: string,
+): Promise<boolean> {
+  return withRuntime(currentRuntime(), () => restartRuntimeConnection(context, binaryOverride));
+}
+
+async function restartRuntimeConnection(context: vscode.ExtensionContext, binaryOverride?: string): Promise<boolean> {
+  if (rt.connectionInitialization) await rt.connectionInitialization;
+  rt.approvalHandler?.resolve();
+  rt.askUserHandler?.cancelActive("backend-restarting");
+  if (rt.processManager && rt.processManager.state !== "stopped") {
+    await rt.processManager.stop();
+  }
+  (rt as { sessionManager: SessionManager | undefined }).sessionManager = undefined;
+  return connectBackend(context, binaryOverride);
+}
+
+async function connectBackendOnce(context: vscode.ExtensionContext, binaryOverride?: string): Promise<boolean> {
+  if (rt.shuttingDown || !rt.currentCwd) return false;
+  const config = vscode.workspace.getConfiguration("chrys");
+  setConnectionState("resolving-backend", rt.currentCwd);
+  const binaryPath = binaryOverride ?? await resolveChrysBinary(config, context);
+  if (!binaryPath) {
+    setConnectionState("error", nativeText("iCode backend not found", "未找到 iCode 后端"));
+    return false;
+  }
+  if (
+    rt.currentBinaryPath === binaryPath
+    && rt.processManager?.state === "running"
+    && rt.sessionManager
+  ) {
+    setConnectionState("ready", rt.currentCwd);
+    return true;
+  }
+
+  if (!rt.processManager) {
+    rt.processManager = createProcessManager(context);
+  } else if (rt.processManager.state !== "stopped") {
+    await rt.processManager.stop();
+  }
+
+  rt.currentBinaryPath = binaryPath;
+  setConnectionState("starting", rt.currentCwd);
+  try {
+    await invalidatePyappCacheIfBinaryChanged(context, binaryPath);
+    if (rt.shuttingDown) return false;
+    const client = await rt.processManager.start(binaryPath, buildAcpArgs(config, rt.currentCwd), rt.currentCwd);
+    setConnectionState("initializing", rt.currentCwd);
+    await onConnected(context, client);
+    setConnectionState("ready", rt.currentCwd);
+    return true;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    logError(`ACP initialization failed: ${message}`);
+    recordLifecycleEvent("AcpInitializationFailed", message);
+    setConnectionState("error", message);
+    await handleAcpInitializeFailure(error);
+    if (rt.processManager.state === "running") await rt.processManager.stop();
+    (rt as { sessionManager: SessionManager | undefined }).sessionManager = undefined;
+    return false;
+  }
+}
+
+function createProcessManager(context: vscode.ExtensionContext): ProcessManager {
+  const manager = new ProcessManager();
+  manager.on("started", bindRuntime((binaryPath, args) => {
+    logInfo(`Starting ACP process: ${String(binaryPath)} ${Array.isArray(args) ? args.join(" ") : ""}`);
+    recordLifecycleEvent("AcpProcessStarted", `${String(binaryPath)} ${Array.isArray(args) ? args.join(" ") : ""}`.trim());
+  }));
+  manager.on("stdout", bindRuntime((line) => { logInfo(`[stdout] ${String(line)}`); }));
+  manager.on("stderr", bindRuntime((text) => {
+    logInfo(`[stderr] ${String(text).trimEnd()}`);
+  }));
+  manager.on("connected", bindRuntime(() => {
+    logInfo("ACP transport connected");
+    recordLifecycleEvent("AcpProcessConnected", rt.currentCwd ?? "(no workspace)");
+  }));
+  manager.on("disconnected", bindRuntime((reason) => {
+    logWarn(`ACP process disconnected: ${String(reason)}`);
+    recordLifecycleEvent("AcpProcessDisconnected", String(reason));
+    console.warn(`[iCode] ACP process disconnected: ${String(reason)}`);
+    rt.approvalHandler?.resolve();
+    rt.askUserHandler?.cancelActive("backend-disconnected");
+    rt.persistCurrentSession();
+    (rt as { sessionManager: SessionManager | undefined }).sessionManager = undefined;
+    setConnectionState("disconnected", String(reason));
+    rt.chatPanel?.showReconnectNotice();
+    scheduleRestart(context);
+  }));
+  manager.on("error", bindRuntime((message) => {
+    logError(String(message));
+    recordLifecycleEvent("AcpProcessError", String(message));
+    setConnectionState("error", String(message));
+    void vscode.window.showErrorMessage(`iCode: ${message}`);
+  }));
+  return manager;
+}
+
+async function reconnectBackend(context: vscode.ExtensionContext): Promise<void> {
+  if (rt.connectionInitialization) await rt.connectionInitialization;
+  const configured = vscode.workspace.getConfiguration("chrys").get<string>("binary.path")?.trim() ?? "";
+  if (configured && rt.currentBinaryPath === expandHome(configured) && rt.processManager?.state === "running" && rt.sessionManager) {
+    return;
+  }
+  rt.approvalHandler?.resolve();
+  rt.askUserHandler?.cancelActive("backend-restarting");
+  if (rt.processManager && rt.processManager.state !== "stopped") await rt.processManager.stop();
+  (rt as { sessionManager: SessionManager | undefined }).sessionManager = undefined;
+  rt.currentBinaryPath = null;
+  if (!(await connectBackend(context))) await offerBackendSetup(context);
+}
+
+async function offerBackendSetup(context: vscode.ExtensionContext): Promise<void> {
+  const message = nativeText(
+    "Select the installed iCode executable, add chrys to PATH, or use a platform VSIX with a bundled runtime.",
+    "请选择已安装的 iCode 可执行文件、把 chrys 加入 PATH，或使用内置运行时的平台 VSIX。",
+  );
+  const locate = nativeText("Select chrys executable", "选择 chrys 可执行文件");
+  const openSettings = nativeText("Open Settings", "打开设置");
+  logError(message);
+  rt.transcript.appendMessage({ id: nextMessageId(), kind: "error", text: message, timestamp: Date.now() });
+  rt.chatPanel?.setState(chatPanelState());
+  const choice = await vscode.window.showErrorMessage(message, locate, openSettings);
+  if (choice === openSettings) {
+    await vscode.commands.executeCommand("workbench.action.openSettings", "chrys.binary.path");
+    return;
+  }
+  if (choice !== locate) return;
+
+  const selected = await vscode.window.showOpenDialog({
+    canSelectFiles: true,
+    canSelectFolders: false,
+    canSelectMany: false,
+    title: nativeText("Select the iCode chrys executable", "选择 iCode 的 chrys 可执行文件"),
+    filters: process.platform === "win32" ? { "chrys.exe": ["exe"] } : undefined,
+  });
+  const selectedPath = selected?.[0]?.fsPath;
+  if (!selectedPath) return;
+  const resolved = await executablePath(selectedPath);
+  if (!resolved) {
+    await vscode.window.showErrorMessage(nativeText(
+      `The selected file is not executable: ${selectedPath}`,
+      `所选文件不可执行：${selectedPath}`,
+    ));
+    return;
+  }
+  if (await connectBackend(context, resolved)) {
+    await vscode.workspace.getConfiguration("chrys").update("binary.path", resolved, vscode.ConfigurationTarget.Global);
+    rt.transcript.appendMessage({
+      id: nextMessageId(),
+      kind: "system",
+      text: nativeText(`iCode connected to the iCode backend at ${resolved}.`, `iCode 已连接到 iCode 后端：${resolved}。`),
+      timestamp: Date.now(),
+    });
+  }
+}

@@ -1,0 +1,135 @@
+# iCode for VS Code
+
+iCode is an extensible coding-agent platform built around the iCode CLI, profile-driven agents, tool execution, approval gating, context management, saved sessions, rollback, MCP tools, skills, and sub-agents. The VS Code extension is the editor-native frontend for the iCode coding agent: it connects to your local iCode CLI over ACP and brings the daily coding workflow into VS Code.
+
+The extension does not replace the iCode CLI or TUI. It keeps iCode as the backend runtime and uses VS Code for the surfaces that are better in an editor: chat, workspace files, integrated terminal, diffs, session tree, model/agent management, diagnostics, and support snapshots.
+
+## What You Get
+
+- Responsive chat with a collapsible dashboard for Messages, Sessions, Context, Debug, and the local Companion.
+- Visible backend startup stages, connection timing, and agent loading progress.
+- Agent chat in a VS Code webview, backed by `chrys acp` from your configured, PATH, or bundled iCode runtime.
+- Streaming assistant text, thinking, tool progress, approval requests, ask-user prompts, token/context status, and sub-agent activity.
+- Workspace-aware file references, pasted/dropped image preparation, quick grep/search, and integrated terminal launch.
+- Tool cards with readable summaries, open/copy/diff actions, rollback, and mutation inspection.
+- Independent session tabs: create or open another session while a task runs. Reopening the same session focuses its existing tab; titles show running, waiting for approval/answers, and completion. Closing a tab keeps its task and pending questions; reopening restores its transcript and text draft.
+- Set a local session name with `/rename`, the chat editor toolbar, or the Sessions tree context menu. Names persist in this VS Code workspace and do not modify the TUI/backend title; leave the name blank to restore the automatic title.
+- Search sent text prompts with `Ctrl+R`, `/prompts`, or **iCode: Search Prompt History**. The latest 100 distinct prompts are retained in this workspace and filtered to the current directory. Selecting only fills the composer; it never sends automatically. `/history` still opens Session JSON.
+- `/clear` means **Clear Display**: conversation context, saved history, usage and plan state remain. Use `/new` for a fresh context.
+- Saved session loading, deletion, session JSON access, and session summaries from the iCode Sessions TreeView.
+- Searchable agent and model profile editors, with separate in-use indicators, collapsible advanced options, and keyboard navigation.
+- Searchable iCode settings and MCP connection testing in the management page.
+- Doctor, logs, runtime details, diagnostics, and redacted support bundles for troubleshooting VSIX/TUI mismatch.
+
+## How It Connects
+
+Install the universal VSIX when you want to manage iCode yourself, or install the platform VSIX when you want the extension to carry the matching iCode runtime. The VSIX never downloads or auto-updates iCode. It starts the selected runtime with `acp`:
+
+- `chrys.binary.path`, when configured
+- `icode` on your `PATH`, with `chrys` as a compatibility fallback
+- the bundled `extension/bin/chrys` or `extension/bin/chrys.exe`, only in platform-specific VSIX packages
+
+The chat header shows the connected backend as `iCode CLI vX.Y.Z`. The VSIX package version is independent and is only part of the extension package metadata shown by VS Code or openUBMC Studio.
+
+If iCode is not found, the extension prompts you to install iCode, set `chrys.binary.path`, or use a platform VSIX with a bundled runtime.
+
+Configure model profiles with iCode itself, then use `iCode: Open Model Management` or `/model` to select the profile for new VSIX sessions.
+
+## Main Workflows
+
+- Open the chat with `iCode: Open iCode`.
+- Send prompts directly, or use composer triggers:
+  - `/` for searchable commands
+  - `@` for file references
+  - `#` for agent switching
+  - `!` for VS Code integrated terminal mode
+- Use `/sessions`, `/model`, `/approval`, `/logs`, `/diagnostics`, `/doctor`, `/history`, `/diff`, and `/theme` for common actions.
+- Use `/help <command>` or `/帮助 <command>` for command-specific examples such as `/help grep`, `/help search`, and `/help copy`.
+- Use the chat Sessions tab to refresh, resume, create, or delete saved sessions without leaving the conversation.
+- Open Context for memory files, MCP tools and failures, skills, sub-agent tools, and compaction status; the dashboard becomes a drawer in narrow editor groups.
+- Use the iCode Sessions TreeView for loading sessions, opening `session.json`, copying session ids, and copying support-friendly summaries.
+
+## Settings
+
+- `chrys.binary.path`: Optional absolute path to a local `icode` (or legacy `chrys`) binary. This overrides PATH and any bundled platform runtime.
+- `chrys.agent.default`: Default agent for new VSIX sessions.
+- `chrys.model.profile`: Default model profile applied to new VSIX sessions after ACP starts. Empty leaves iCode model resolution unchanged.
+- `chrys.approval.mode`: Initial approval mode: `manual`, `auto`, or `bypass`.
+- `chrys.ui.language`: Extension display language: `auto`, `en`, or `zh-CN`.
+- `chrys.ui.theme`: Extension theme: `auto` or any supported TUI theme such as `chrys`, `chrys-ansi`, `dracula`, `monokai`, `nord`, or `tokyo-night`. Auto follows `CHRYS_THEME` only when it maps to a supported VSIX theme.
+
+## VSIX and TUI parity
+
+This extension intentionally uses VS Code surfaces where they fit the IDE better than recreating every TUI panel:
+
+- Terminal mode opens the VS Code integrated terminal instead of embedding a TUI PTY panel.
+- Session JSON, session IDs, and support summaries are available from the Sessions tree context menu.
+- Logs and Doctor actions focus on debugging VSIX/TUI mismatch issues, ACP startup, model selection, image handling, and operation guards.
+- `/search` opens VS Code Search; `/grep` provides a quick line picker for simple workspace matches, plus copy/insert actions so matches can become the next agent prompt.
+- Image paste/drop shows preparation and compression progress in the composer. Image input still depends on the active iCode model profile advertising vision support.
+- Companion is a VSIX-owned workflow pet: a quiet local animated WebP Buddy tab with an unframed pixel character, click-to-pet interaction, XP progress, and a compact options menu, daily 09:00 summon and collection state behind `/companion summon` and `/companion collection`, real iCode-usage growth levels, pet/mute/rename/info interactions, and direct-address short responses without backend Buddy APIs.
+
+Accepted VSIX/TUI differences are tracked in [VSIX Design Decisions](./DESIGN_DECISIONS.md). Use that table before reopening parity questions.
+
+For release gating, use [VSIX Release Checklist](./RELEASE_CHECKLIST.md). It is the source of truth for remaining manual parity, UX, coding-agent, diagnostics, and localization smoke checks.
+
+`npm run lint` type-checks both the extension host and browser webview. `npm test` runs the unit, webview interaction, and manifest tests under `src/__tests__`. The integration smoke test is available as `npm run test:integration` and requires a local iCode binary compatible with the test path.
+
+`npm run deploy` packages the universal VSIX and installs it into the local macOS openUBMC Studio app for dogfooding. It does not publish a marketplace or GitHub release.
+
+Release builds are manual. The CD workflow publishes a VSIX tag such as `v0.0.19-icode-v0.27.1` from a selected ref and downloads offline runtime binaries from the public [iCode releases](https://github.com/openJiuwen-ai/iCode/releases). It uses the standard GitHub Actions token; no private backend repository token is required.
+
+## Current Status
+
+This VSIX is a standalone frontend release. The universal package does not include iCode. Platform packages may include release-built PyApp binaries for the matching OS/architecture, but they must not depend on private ACP patches. Backend protocol gaps that do not block normal coding-agent workflows are tracked separately and are not release blockers by default.
+
+Known deferred areas:
+
+- Cross-client session-title changes, approval argument editing and restored interrupted-session replay need supported ACP contracts before the VSIX can implement them safely.
+- Companion is local to the VSIX. It uses safe local card/pack data, grows from real iCode usage/time, keeps the Buddy tab compact, supports collection/summon/pet/mute/rename/info/direct-address responses through local commands, and never calls private backend Buddy APIs or depends on iCode hook configuration.
+- Some TUI-only screens intentionally map to VS Code TreeView, Command Palette, QuickPick, webview dialogs, or integrated terminal surfaces instead of direct visual clones.
+
+## 中文说明
+
+iCode 是一个完整的 coding-agent 平台，由 iCode CLI 承载运行时，支持配置驱动的智能体、工具调用、审批门控、上下文管理、会话持久化、回滚、MCP、技能和子智能体。iCode VS Code 扩展是这个平台的编辑器前端，通过 ACP 连接用户配置、PATH 或平台 VSIX 内置的 iCode CLI，把聊天、工具进度、审批、差异查看、回滚、会话、模型/智能体管理和工作区文件操作带进 VS Code。
+
+如果安装通用 VSIX，请先单独安装 iCode CLI。扩展不会下载或自动更新 iCode；它会优先使用 `chrys.binary.path`，然后依次查找 PATH 中的 `icode`、`chrys` 命令，最后才使用平台 VSIX 内置的 `extension/bin/chrys` 或 `extension/bin/chrys.exe`。如果找不到 iCode，扩展会提示先安装、设置可执行文件路径，或换用内置运行时的平台 VSIX。
+
+界面中显示的运行时版本来自后端，会写成 `iCode CLI vX.Y.Z`。VSIX 自己的包版本是独立的，只作为 VS Code 或 openUBMC Studio 插件页里的扩展元数据。
+
+中文体验：
+
+- 模型和智能体编辑器支持搜索，区分正在编辑的配置与当前使用的配置；高级连接参数默认收起。设置页支持按名称和环境变量搜索。
+
+- 聊天采用可折叠侧栏：消息、会话、上下文、调试和本地伙伴；窄编辑器中侧栏自动切换为抽屉。
+- 启动时显示工作区解析、后端启动和 ACP 初始化进度；会话页支持刷新、恢复、新建、删除，上下文页集中显示记忆文件、MCP 工具与失败、技能、子智能体工具和压缩状态。
+- 压缩与回滚以可展开的活动卡片呈现，子智能体工具卡汇总内部调用和用量。
+- `chrys.ui.language` 设为 `zh-CN` 可强制使用中文界面；设为 `auto` 会跟随 VS Code 显示语言。
+- `/rename`、聊天编辑器工具栏和会话树右键菜单可设置会话本地名称，保存在当前 VS Code 工作区，不修改 TUI／后端标题；留空恢复自动标题。
+- `Ctrl+R`、`/prompts` 或“iCode: 搜索历史输入”可检索当前目录的历史提示词。此工作区最多保留最近 100 条不同的已发送文本，跨 Tab 可用；选择后只填回输入框，不自动发送。`/history` 仍用于查看会话 JSON。
+- `/clear` 明确表示“清空显示”，保留会话上下文、保存的历史、用量和计划；需要新上下文时使用 `/new`。
+- 每个会话独立占用一个编辑器 Tab，可在任务运行时新建或打开其他会话。重复打开会话会定位到已有 Tab；标题显示运行中、待审批、待回答和已完成。关闭 Tab 保留后台任务与待处理问题，重新打开恢复对话和文本草稿。
+- 聊天输入支持 TUI 风格触发：`/` 命令、`@` 文件、`#` 智能体、`!` 终端，并支持全角 `／`、`＠`、`＃`、`！`。
+- VSIX 不复刻 TUI 的 F-key/footer 快捷按钮；会话、模型、日志、主题等入口使用 slash 命令、Command Palette、TreeView 和 VS Code 原生界面。
+- VSIX 终端模式会打开 VS Code 集成终端；Session JSON、会话 ID 和会话摘要通过 Sessions tree 右键菜单提供；伙伴功能由 VSIX 本地承载，Buddy tab 采用无框像素角色展示，支持点击角色互动、成长进度和紧凑的选项菜单；支持动画 WebP、通过 `/companion summon` 每日 09:00 召唤、通过 `/companion collection` 查看收藏状态、抚摸、重命名、静音、详情、直接叫名字的本地短回应，以及基于 iCode 使用/时间的成长等级。
+- 如果发现 VSIX 和 TUI 行为不一致，可运行 `iCode: Diagnostics Report` 或 `/support` 复制支持快照；其中包含输入触发、工具渲染和操作 guard 的排查信息。
+
+## Notes
+
+The VS Code extension uses iCode ACP for backend communication and keeps the first release focused on editor-native workflows. File mentions, file attachments, terminal launch, structured session JSON, logs, and copy actions use VS Code surfaces where that is a better fit than recreating every TUI panel directly.
+
+### Welcome brand / 欢迎页标识
+
+The welcome page defaults to **iCode**. Click its mark to choose the **iC** or **C** icon, or change `chrys.ui.brand` in editor settings. The selection is saved automatically.
+
+欢迎页默认显示 **iCode**。点击标识可选择 **iC** 或 **C** 图标，也可在编辑器设置中修改 `chrys.ui.brand`；选择会自动保存。
+
+Each live session uses a separate iCode ACP process, so multiple sessions consume additional memory. Closing a tab keeps that runtime until the IDE extension shuts down. Reloading the IDE restores the last active saved session; reopen others from Sessions. Sessions in the same workspace share files.
+
+每个活跃会话使用独立的 iCode ACP 进程，多会话会增加内存占用。关闭 Tab 后运行时保留至扩展退出；重新加载 IDE 会恢复最后活跃的已保存会话，其他会话可从列表重新打开。同一工作区的会话共享文件。
+
+## iCode naming and compatibility
+
+The upstream runtime is [openJiuwen-ai/iCode](https://github.com/openJiuwen-ai/iCode). This extension uses the iCode product name and the `icode-vscode-plugin` package name. Existing `chrys.*` commands/settings, theme identifiers, storage keys, bundled launcher names and `_chrys/*` ACP routes remain compatibility identifiers. A renamed extension has a new extension ID; extension-scoped saved state is not automatically migrated from the old extension. Disable the old Chrys extension before enabling this one to avoid duplicate command registrations.
+
+上游运行时已迁至 [openJiuwen-ai/iCode](https://github.com/openJiuwen-ai/iCode)。本扩展使用 iCode 品牌，包名为 `icode-vscode-plugin`。现有 `chrys.*` 命令、设置、主题、存储键、内置启动器名称和 `_chrys/*` ACP 路由作为兼容标识保留。扩展 ID 改变后，旧扩展的专属状态不会自动迁移；启用本扩展前请禁用旧 Chrys 扩展，避免重复注册命令。

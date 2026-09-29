@@ -1,0 +1,258 @@
+name: CD
+run-name: "CD - ${{ inputs.vsix_release_tag }} with ${{ inputs.icode_release_tag }} (${{ inputs.platform || 'all' }})"
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: 'Branch or commit to build (default: main)'
+        type: string
+        default: main
+      vsix_release_tag:
+        description: 'VSIX release tag to create, for example v0.0.19-icode-v0.27.1'
+        type: string
+        required: true
+      platform:
+        description: 'Platform VSIX target group to build'
+        type: choice
+        default: all
+        options:
+          - all
+          - windows
+          - macos
+          - linux
+      icode_release_tag:
+        description: 'iCode CLI release tag that provides platform binaries'
+        type: string
+        required: true
+
+concurrency:
+  group: cd-${{ github.ref }}-${{ github.workflow }}
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+jobs:
+  ci:
+    uses: ./.github/workflows/ci.yml
+
+  compute-matrix:
+    name: Compute platform VSIX matrix
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.filter.outputs.matrix }}
+    steps:
+      - id: filter
+        shell: bash
+        run: |
+          platform="${{ inputs.platform || 'all' }}"
+          all_targets='[
+            {"artifact":"chrys-linux-x86_64","binary_artifact":"icode-linux-x86_64","archive_ext":"tar.gz","vsix_target":"linux-x64","platform":"linux","binary":"icode","launcher":"chrys","runner":"ubuntu-latest"},
+            {"artifact":"chrys-linux-aarch64","binary_artifact":"icode-linux-aarch64","archive_ext":"tar.gz","vsix_target":"linux-arm64","platform":"linux","binary":"icode","launcher":"chrys","runner":"ubuntu-24.04-arm"},
+            {"artifact":"chrys-macos-aarch64","binary_artifact":"icode-macos-aarch64","archive_ext":"tar.gz","vsix_target":"darwin-arm64","platform":"macos","binary":"icode","launcher":"chrys","runner":"macos-14"},
+            {"artifact":"chrys-macos-x86_64","binary_artifact":"icode-macos-x86_64","archive_ext":"tar.gz","vsix_target":"darwin-x64","platform":"macos","binary":"icode","launcher":"chrys","runner":"macos-15-intel"},
+            {"artifact":"chrys-windows-x86_64","binary_artifact":"icode-windows-x86_64","archive_ext":"zip","vsix_target":"win32-x64","platform":"windows","binary":"icode.exe","launcher":"chrys.cmd","runner":"windows-latest"}
+          ]'
+          if [ "$platform" = "all" ]; then
+            filtered="$all_targets"
+          else
+            filtered=$(echo "$all_targets" | jq -c "[.[] | select(.platform == \"$platform\")]")
+          fi
+          matrix=$(jq -nc --argjson include "$filtered" '{"include":$include}')
+          echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
+
+  build-vsix-universal:
+    name: Build universal VSIX
+    needs: ci
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: package-lock.json
+      - uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.14"
+          allow-prereleases: true
+      - name: Install VSIX dependencies
+        run: npm ci
+      - name: Build VSIX bundles
+        run: npm run build
+      - name: Package universal VSIX
+        run: npm run package
+      - uses: actions/upload-artifact@v7
+        with:
+          name: icode-vscode-plugin-universal
+          path: icode-vscode-plugin-*.vsix
+
+  build-vsix-platform:
+    name: Build VSIX (${{ matrix.vsix_target }})
+    needs: [ci, compute-matrix]
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.compute-matrix.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: package-lock.json
+      - uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.14"
+          allow-prereleases: true
+      - name: Download iCode release binary
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ICODE_RELEASE_TAG: ${{ inputs.icode_release_tag }}
+        run: |
+          gh release download "$ICODE_RELEASE_TAG" --repo openJiuwen-ai/iCode --pattern "${{ matrix.binary_artifact }}-*-offline.${{ matrix.archive_ext }}" --dir bundled-binary
+      - name: Resolve bundled binary path
+        id: binary
+        shell: bash
+        run: |
+          mkdir extracted
+          archive="$(find bundled-binary -type f | head -1)"
+          if [ -z "$archive" ]; then
+            echo "::error::Could not find downloaded iCode archive for ${{ matrix.vsix_target }}"
+            find bundled-binary -maxdepth 3 -type f -print
+            exit 1
+          fi
+          case "$archive" in
+            *.zip) unzip -q "$archive" -d extracted ;;
+            *.tar.gz) tar -xzf "$archive" -C extracted ;;
+            *) echo "::error::Unsupported iCode archive: $archive"; exit 1 ;;
+          esac
+          binary="$(find extracted -type f -name '${{ matrix.binary }}' | head -1)"
+          if [ -z "$binary" ]; then
+            echo "::error::Could not find iCode binary ${{ matrix.binary }} for ${{ matrix.vsix_target }}"
+            find extracted -maxdepth 3 -type f -print
+            exit 1
+          fi
+          if [ "${{ matrix.vsix_target }}" != "win32-x64" ]; then
+            chmod +x "$binary"
+          fi
+          echo "path=$binary" >> "$GITHUB_OUTPUT"
+      - name: Prepare standalone iCode runtime
+        id: runtime
+        shell: bash
+        run: |
+          python scripts/prepare_runtime.py \
+            --binary "${{ steps.binary.outputs.path }}" \
+            --target "${{ matrix.vsix_target }}" \
+            --output-dir "prepared-runtime"
+          launcher="$(find prepared-runtime -maxdepth 1 -type f -name '${{ matrix.launcher }}' | head -1)"
+          if [ -z "$launcher" ]; then
+            echo "::error::Could not find prepared runtime launcher ${{ matrix.launcher }}"
+            find prepared-runtime -maxdepth 2 -type f -print
+            exit 1
+          fi
+          echo "path=prepared-runtime" >> "$GITHUB_OUTPUT"
+          echo "launcher=$launcher" >> "$GITHUB_OUTPUT"
+      - name: Smoke bundled iCode runtime
+        shell: bash
+        env:
+          CHRYS_LAUNCHER: ${{ steps.runtime.outputs.launcher }}
+        run: |
+          node <<'NODE'
+          const path = require("node:path");
+          const { spawn } = require("node:child_process");
+          const launcher = process.env.CHRYS_LAUNCHER;
+          if (!launcher) {
+            console.error("CHRYS_LAUNCHER is not set");
+            process.exit(1);
+          }
+          const launcherPath = path.resolve(launcher);
+          const timeoutMs = 45_000;
+          const isCmd = process.platform === "win32" && /\.(cmd|bat)$/i.test(launcherPath);
+          const child = spawn(launcherPath, ["--version"], {
+            shell: isCmd,
+            stdio: ["ignore", "pipe", "pipe"],
+          });
+          let timedOut = false;
+          let output = "";
+          child.stdout.on("data", (chunk) => {
+            output += chunk.toString();
+          });
+          child.stderr.on("data", (chunk) => {
+            output += chunk.toString();
+          });
+          const timer = setTimeout(() => {
+            timedOut = true;
+            child.kill();
+            setTimeout(() => process.exit(124), 1000).unref();
+          }, timeoutMs);
+          child.on("error", (err) => {
+            clearTimeout(timer);
+            console.error(`failed to execute bundled iCode runtime: ${err.message}`);
+            process.exit(1);
+          });
+          child.on("exit", (code, signal) => {
+            clearTimeout(timer);
+            process.stdout.write(output);
+            if (timedOut) {
+              console.error(`bundled iCode runtime did not answer --version within ${timeoutMs / 1000}s`);
+              console.error("Prepared VSIX runtimes must run without first-run dependency installation.");
+              process.exit(124);
+            }
+            if (code !== 0) {
+              console.error(`bundled iCode runtime --version failed with ${signal || `exit code ${code}`}`);
+              process.exit(code || 1);
+            }
+          });
+          NODE
+      - name: Install VSIX dependencies
+        run: npm ci
+      - name: Build VSIX bundles
+        run: npm run build
+      - name: Package platform VSIX
+        run: npm run package -- --target ${{ matrix.vsix_target }} --runtime "${{ steps.runtime.outputs.path }}"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: icode-vscode-plugin-${{ matrix.vsix_target }}
+          path: icode-vscode-plugin-*-${{ matrix.vsix_target }}.vsix
+
+  release:
+    name: Publish release
+    needs: [build-vsix-universal, build-vsix-platform]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v7
+        with:
+          path: artifacts
+      - name: Collect release assets
+        run: |
+          mkdir release
+          cp artifacts/icode-vscode-plugin-universal/*.vsix release/
+          for artifact_dir in artifacts/icode-vscode-plugin-*; do
+            artifact_name="$(basename "$artifact_dir")"
+            case "$artifact_name" in
+              icode-vscode-plugin-universal|icode-vscode-plugin-linux|icode-vscode-plugin-macos|icode-vscode-plugin-windows)
+                continue
+                ;;
+            esac
+            cp "$artifact_dir"/*.vsix release/
+          done
+          cd release && sha256sum * > SHA256SUMS.txt && cat SHA256SUMS.txt
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ inputs.vsix_release_tag }}
+          generate_release_notes: true
+          files: release/*
