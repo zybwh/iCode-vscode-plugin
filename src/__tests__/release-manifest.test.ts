@@ -157,6 +157,23 @@ describe("VSIX release manifest", () => {
     expect(sessionTreeSource).toContain("chrys.showStructuredHistory");
   });
 
+  it("ships Apache-2.0 licensing with preserved original notices and bilingual repository links", () => {
+    const lock = JSON.parse(readSource("package-lock.json"));
+    expect(packageJson.license).toBe("Apache-2.0");
+    expect(lock.packages[""].license).toBe("Apache-2.0");
+    expect(readSource("LICENSE")).toContain("Version 2.0, January 2004");
+    expect(readSource("NOTICE")).toContain("Copyright (c) 2026 Jiaqi (0x7c13) Liu");
+    expect(readSource("NOTICE")).toContain("Permission is hereby granted, free of charge");
+    expect(readSource("scripts", "pack.py")).toContain('z.write(notice_path, "extension/NOTICE")');
+    const readme = readSource("README.md");
+    expect(readme).toContain("## English");
+    expect(readme).toContain("## 中文说明");
+    expect(readme).toContain("https://github.com/zybwh/iCode-vscode-plugin");
+    expect(readme).toContain("https://github.com/openJiuwen-ai/iCode");
+    expect(readme).toContain("## License / 许可证");
+    expect(readme).not.toContain("https://github.com/0x7c13/chrys");
+  });
+
   it("ships marketplace-facing metadata assets", () => {
     const readme = fs.readFileSync(path.join(extensionRoot, "README.md"), "utf8");
 
@@ -556,7 +573,7 @@ describe("VSIX release manifest", () => {
     expect(releaseChecklist).toContain("dedicated ACP reset route");
   });
 
-  it("keeps VSIX 0.0.19 release metadata aligned", () => {
+  it("keeps VSIX 0.0.20 release metadata aligned", () => {
     const packageLock = JSON.parse(readSource("package-lock.json")) as {
       version: string;
       packages: Record<string, { version?: string }>;
@@ -565,11 +582,11 @@ describe("VSIX release manifest", () => {
     const readme = readSource("README.md");
     const workflow = readSource(".github", "workflows", "cd.yml");
 
-    expect(packageJson.version).toBe("0.0.19");
-    expect(packageLock.version).toBe("0.0.19");
-    expect(packageLock.packages[""].version).toBe("0.0.19");
-    expect(versionSource).toContain('PACKAGE_VERSION = "0.0.19"');
-    expect(readme).toContain("v0.0.19-icode-v0.27.1");
+    expect(packageJson.version).toBe("0.0.20");
+    expect(packageLock.version).toBe("0.0.20");
+    expect(packageLock.packages[""].version).toBe("0.0.20");
+    expect(versionSource).toContain('PACKAGE_VERSION = "0.0.20"');
+    expect(readme).toContain("v0.0.20-icode-v0.27.1");
     expect(workflow).toMatch(/VSIX release tag to create, for example v\d+\.\d+\.\d+-icode-v\d+\.\d+\.\d+/);
   });
 

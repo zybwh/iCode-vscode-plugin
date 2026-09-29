@@ -1,5 +1,11 @@
 # iCode for VS Code
 
+[English](#english) | [简体中文](#中文说明)
+
+[Plugin repository / 插件仓库](https://github.com/zybwh/iCode-vscode-plugin) · [iCode CLI / 上游运行时](https://github.com/openJiuwen-ai/iCode) · [Issues / 问题反馈](https://github.com/zybwh/iCode-vscode-plugin/issues)
+
+## English
+
 iCode is an extensible coding-agent platform built around the iCode CLI, profile-driven agents, tool execution, approval gating, context management, saved sessions, rollback, MCP tools, skills, and sub-agents. The VS Code extension is the editor-native frontend for the iCode coding agent: it connects to your local iCode CLI over ACP and brings the daily coding workflow into VS Code.
 
 The extension does not replace the iCode CLI or TUI. It keeps iCode as the backend runtime and uses VS Code for the surfaces that are better in an editor: chat, workspace files, integrated terminal, diffs, session tree, model/agent management, diagnostics, and support snapshots.
@@ -8,7 +14,7 @@ The extension does not replace the iCode CLI or TUI. It keeps iCode as the backe
 
 - Responsive chat with a collapsible dashboard for Messages, Sessions, Context, Debug, and the local Companion.
 - Visible backend startup stages, connection timing, and agent loading progress.
-- Agent chat in a VS Code webview, backed by `chrys acp` from your configured, PATH, or bundled iCode runtime.
+- Agent chat in a VS Code webview, backed by `icode acp` (with legacy `chrys acp` compatibility) from your configured, PATH, or bundled iCode runtime.
 - Streaming assistant text, thinking, tool progress, approval requests, ask-user prompts, token/context status, and sub-agent activity.
 - Workspace-aware file references, pasted/dropped image preparation, quick grep/search, and integrated terminal launch.
 - Tool cards with readable summaries, open/copy/diff actions, rollback, and mutation inspection.
@@ -20,6 +26,16 @@ The extension does not replace the iCode CLI or TUI. It keeps iCode as the backe
 - Searchable agent and model profile editors, with separate in-use indicators, collapsible advanced options, and keyboard navigation.
 - Searchable iCode settings and MCP connection testing in the management page.
 - Doctor, logs, runtime details, diagnostics, and redacted support bundles for troubleshooting VSIX/TUI mismatch.
+
+## Installation
+
+Requires VS Code 1.95 or newer, or a compatible openUBMC Studio build.
+
+1. Install the CLI following the [upstream iCode instructions](https://github.com/openJiuwen-ai/iCode#how-to-run), or obtain a matching binary from [iCode releases](https://github.com/openJiuwen-ai/iCode/releases).
+2. Build the plugin with the development commands below, or use a VSIX if available on [plugin releases](https://github.com/zybwh/iCode-vscode-plugin/releases). In VS Code, run **Extensions: Install from VSIX...**.
+3. Open a workspace. If the CLI is not on PATH, set `chrys.binary.path` to its absolute executable path. Configure a model profile in iCode, then run **iCode: Open iCode**.
+
+Disable the old Chrys extension before enabling this extension. The new extension ID does not automatically migrate extension-scoped saved state.
 
 ## How It Connects
 
@@ -77,7 +93,7 @@ For release gating, use [VSIX Release Checklist](./RELEASE_CHECKLIST.md). It is 
 
 `npm run deploy` packages the universal VSIX and installs it into the local macOS openUBMC Studio app for dogfooding. It does not publish a marketplace or GitHub release.
 
-Release builds are manual. The CD workflow publishes a VSIX tag such as `v0.0.19-icode-v0.27.1` from a selected ref and downloads offline runtime binaries from the public [iCode releases](https://github.com/openJiuwen-ai/iCode/releases). It uses the standard GitHub Actions token; no private backend repository token is required.
+Release builds are manual. The CD workflow publishes a VSIX tag such as `v0.0.20-icode-v0.27.1` from a selected ref and downloads offline runtime binaries from the public [iCode releases](https://github.com/openJiuwen-ai/iCode/releases). It uses the standard GitHub Actions token; no private backend repository token is required.
 
 ## Current Status
 
@@ -90,6 +106,18 @@ Known deferred areas:
 - Some TUI-only screens intentionally map to VS Code TreeView, Command Palette, QuickPick, webview dialogs, or integrated terminal surfaces instead of direct visual clones.
 
 ## 中文说明
+
+### 安装
+
+需要 VS Code 1.95 或更新版本，或兼容的 openUBMC Studio。
+
+1. 按照 [iCode 上游说明](https://github.com/openJiuwen-ai/iCode#how-to-run)安装 CLI，或从 [iCode Releases](https://github.com/openJiuwen-ai/iCode/releases) 获取对应平台的运行时。
+2. 使用下方开发命令构建插件，或在[插件 Releases](https://github.com/zybwh/iCode-vscode-plugin/releases) 有可用版本时下载 VSIX。在 VS Code 中运行 **Extensions: Install from VSIX...** 安装。
+3. 打开工作区。如果 CLI 不在 PATH 中，将 `chrys.binary.path` 设置为可执行文件的绝对路径。在 iCode 中配置模型后，运行 **iCode: 打开 iCode**。
+
+启用本扩展前请禁用旧 Chrys 扩展；新扩展 ID 不会自动迁移旧扩展的专属状态。
+
+### 功能与连接方式
 
 iCode 是一个完整的 coding-agent 平台，由 iCode CLI 承载运行时，支持配置驱动的智能体、工具调用、审批门控、上下文管理、会话持久化、回滚、MCP、技能和子智能体。iCode VS Code 扩展是这个平台的编辑器前端，通过 ACP 连接用户配置、PATH 或平台 VSIX 内置的 iCode CLI，把聊天、工具进度、审批、差异查看、回滚、会话、模型/智能体管理和工作区文件操作带进 VS Code。
 
@@ -133,3 +161,36 @@ Each live session uses a separate iCode ACP process, so multiple sessions consum
 The upstream runtime is [openJiuwen-ai/iCode](https://github.com/openJiuwen-ai/iCode). This extension uses the iCode product name and the `icode-vscode-plugin` package name. Existing `chrys.*` commands/settings, theme identifiers, storage keys, bundled launcher names and `_chrys/*` ACP routes remain compatibility identifiers. A renamed extension has a new extension ID; extension-scoped saved state is not automatically migrated from the old extension. Disable the old Chrys extension before enabling this one to avoid duplicate command registrations.
 
 上游运行时已迁至 [openJiuwen-ai/iCode](https://github.com/openJiuwen-ai/iCode)。本扩展使用 iCode 品牌，包名为 `icode-vscode-plugin`。现有 `chrys.*` 命令、设置、主题、存储键、内置启动器名称和 `_chrys/*` ACP 路由作为兼容标识保留。扩展 ID 改变后，旧扩展的专属状态不会自动迁移；启用本扩展前请禁用旧 Chrys 扩展，避免重复注册命令。
+
+## Development / 开发
+
+```bash
+npm ci
+npm run lint
+npm test
+npm run build
+npm run package
+```
+
+The package command requires [uv](https://github.com/astral-sh/uv) and writes `icode-vscode-plugin-0.0.20.vsix`. The universal VSIX does not bundle the CLI. `npm run deploy` installs it into the local macOS openUBMC Studio application.
+
+打包需要 [uv](https://github.com/astral-sh/uv)，输出 `icode-vscode-plugin-0.0.20.vsix`。通用包不包含 CLI；`npm run deploy` 会安装到本机 macOS 的 openUBMC Studio。
+
+For integration tests, set `ICODE_BINARY_PATH` to the iCode executable and run `npm run test:integration`. The default expected CLI version is 0.27.1; override it with `ICODE_EXPECTED_VERSION` when testing another release. Model-backed tests require a configured model profile.
+
+集成测试通过 `ICODE_BINARY_PATH` 指定 iCode 可执行文件，然后运行 `npm run test:integration`。默认期望 CLI 版本为 0.27.1，测试其他版本时可设置 `ICODE_EXPECTED_VERSION`；调用模型的测试需要可用的模型配置。
+
+### 中文设置与发布说明
+
+- `chrys.agent.default`：新会话默认智能体。
+- `chrys.model.profile`：新会话的模型配置；留空沿用后端默认选择。
+- `chrys.approval.mode`：初始审批模式，支持 `manual`、`auto`、`bypass`。
+- `chrys.ui.theme`：主题；`auto` 跟随受支持的 `CHRYS_THEME`，也可选择 `chrys`、`chrys-ansi`、`dracula`、`monokai`、`nord`、`tokyo-night` 等。
+
+发布检查参见 [RELEASE_CHECKLIST.md](./RELEASE_CHECKLIST.md)，VSIX 与 TUI 的已接受差异参见 [DESIGN_DECISIONS.md](./DESIGN_DECISIONS.md)。CD 仅手动触发，从公开的 iCode Releases 获取离线运行时，不需要旧私有仓库令牌。审批参数编辑、跨客户端会话改名和中断会话重放仍需后端提供相应 ACP 契约。
+
+## License / 许可证
+
+This project uses the [Apache License 2.0](./LICENSE), the same license as [upstream iCode](https://github.com/openJiuwen-ai/iCode/blob/main/LICENSE). The original extension copyright and MIT permission notice are preserved in [NOTICE](./NOTICE). Third-party dependencies and assets retain their own applicable licenses.
+
+本项目采用与 [上游 iCode](https://github.com/openJiuwen-ai/iCode/blob/main/LICENSE) 一致的 [Apache License 2.0](./LICENSE)。原扩展的版权声明和 MIT 许可文本保留在 [NOTICE](./NOTICE) 中。第三方依赖和素材仍适用各自的许可证。

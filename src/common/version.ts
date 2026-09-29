@@ -1,2 +1,2 @@
-export const PACKAGE_VERSION = "0.0.19";
+export const PACKAGE_VERSION = "0.0.20";
 export const PROTOCOL_VERSION = 1;

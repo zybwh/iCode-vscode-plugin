@@ -38,7 +38,7 @@ Universal VSIX packages must not include `extension/bin/`. Platform VSIX package
 
 ## GitHub Release
 
-The CD workflow is manual-only. Creating a GitHub release or tag must not automatically start CD, because release tags such as `v0.0.19-icode-v0.27.1` are VSIX tags, not iCode CLI runtime tags.
+The CD workflow is manual-only. Creating a GitHub release or tag must not automatically start CD, because release tags such as `v0.0.20-icode-v0.27.1` are VSIX tags, not iCode CLI runtime tags.
 
 When using CD to publish platform VSIX packages, pass both:
 

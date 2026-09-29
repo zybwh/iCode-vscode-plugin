@@ -173,6 +173,9 @@ def main() -> None:
         license_path = ext_dir / "LICENSE"
         if license_path.exists():
             z.write(license_path, "extension/LICENSE")
+        notice_path = ext_dir / "NOTICE"
+        if notice_path.exists():
+            z.write(notice_path, "extension/NOTICE")
         readme_path = ext_dir / "README.md"
         if readme_path.exists():
             z.write(readme_path, "extension/README.md")
