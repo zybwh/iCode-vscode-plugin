@@ -9,7 +9,7 @@ on:
         type: string
         default: main
       vsix_release_tag:
-        description: 'VSIX release tag to create, for example v0.0.21-icode-v0.27.1'
+        description: 'VSIX release tag to create, for example v0.0.22-icode-v0.27.1'
         type: string
         required: true
       platform:

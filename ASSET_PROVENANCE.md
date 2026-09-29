@@ -95,7 +95,12 @@ it does not claim that a particular creation tool or external reference was used
 
 ## Extension icons
 
-`resources/icon.png` and `resources/chrys.svg`: provenance confirmation pending.
-The Companion declaration above does not cover these two files.
+Repository owner `zybwh` confirmed on 2026-09-29 that these are the team's own
+icons and authorized their continued use in this Apache-2.0 project.
 
-两个扩展图标的来源仍待确认；上述伙伴素材声明不覆盖这两个文件。
+仓库所有者 `zybwh` 于 2026-09-29 确认，这两个图标是团队自有素材，继续用于本项目。
+
+| File | SHA-256 |
+| --- | --- |
+| `resources/icon.png` | `4739477a63607f944a1bc54e0c1881266339627c271d27eaa260aca73788641a` |
+| `resources/chrys.svg` | `ce4e291d49c84dbde867c947deb0e32bec214d2a8bc60ee1e701ad916cb1be6c` |

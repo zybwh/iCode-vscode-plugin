@@ -2,7 +2,7 @@
   "name": "icode-vscode-plugin",
   "displayName": "iCode",
   "description": "%extension.description%",
-  "version": "0.0.21",
+  "version": "0.0.22",
   "publisher": "icode",
   "license": "Apache-2.0",
   "repository": {
