@@ -21,7 +21,10 @@ import { awardCompanionUsageEvent } from "./companion";
 // Session update dispatch
 // ──────────────────────────────────────────────
 
-export async function handleSessionUpdate(_sessionId: string, update: SessionUpdate): Promise<void> {
+export async function handleSessionUpdate(sessionId: string, update: SessionUpdate): Promise<void> {
+  // Replay sets the target session before dispatch; reject foreign traffic
+  // before inspecting its payload or touching presentation state.
+  if (rt.currentSessionId && sessionId !== rt.currentSessionId) return;
   try {
     emitSessionDebugEvent(update);
 
@@ -149,7 +152,12 @@ export function handleAgentChunk(update: AgentMessageChunk): void {
     return;
   }
 
+  if (update.messageId && rt.activeAgentSourceMessageId && update.messageId !== rt.activeAgentSourceMessageId) {
+    rt.activeAgentMessageId = null;
+    rt.activeAgentText = "";
+  }
   if (!rt.activeAgentMessageId) {
+    rt.activeAgentSourceMessageId = update.messageId ?? null;
     rt.activeAgentMessageId = nextMessageId();
     rt.activeAgentText = text;
     rt.transcript.appendMessage({
@@ -159,6 +167,7 @@ export function handleAgentChunk(update: AgentMessageChunk): void {
       timestamp: Date.now(),
     });
   } else {
+    if (update.messageId) rt.activeAgentSourceMessageId = update.messageId;
     rt.activeAgentText += text;
     rt.transcript.updateMessageTextOnly(rt.activeAgentMessageId, rt.activeAgentText);
   }
@@ -213,6 +222,19 @@ export function handleToolCallStart(update: ToolCallStart): void {
   rt.activeThoughtMessageId = null;
   rt.activeThoughtText = "";
 
+  const prior = rt.toolSnapshots.get(update.toolCallId);
+  if (rt.toolMessageIds.has(update.toolCallId)) {
+    // A progress/result frame may precede the start frame. Enrich that card,
+    // retaining its terminal status until another terminal result arrives.
+    const terminalStatus = prior?.status === "completed" || prior?.status === "failed" ? prior.status : undefined;
+    handleToolCallProgress({
+      ...update,
+      sessionUpdate: "tool_call_update",
+      status: terminalStatus && update.status !== "completed" && update.status !== "failed"
+        ? terminalStatus : update.status,
+    });
+    return;
+  }
   const invocationId = rt.subAgentInvocationByParentCallId.get(update.toolCallId);
   const existingMessageId = invocationId ? rt.subAgentMessageIds.get(invocationId) : undefined;
   const messageId = existingMessageId ?? nextMessageId();
@@ -255,7 +277,7 @@ export function handleToolCallProgress(update: ToolCallProgress): void {
   if (update.content !== undefined) snapshot.content = update.content;
   if (update._meta !== undefined) snapshot.metadata = update._meta;
   if (update.rawOutput !== undefined) {
-    if (typeof update.rawOutput === "string" && typeof snapshot.rawOutput === "string" && update.status !== "completed") {
+    if (typeof update.rawOutput === "string" && typeof snapshot.rawOutput === "string" && update.status !== "completed" && update.status !== "failed") {
       snapshot.rawOutput = (snapshot.rawOutput as string) + update.rawOutput;
     } else {
       snapshot.rawOutput = update.rawOutput;

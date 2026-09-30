@@ -105,3 +105,15 @@ it("updates the active session workspace without restarting the backend", async 
   expect(rt.currentCwd).toBe(path.resolve("/workspace/second"));
   expect(rt.currentSessionId).toBe("session-1");
 });
+
+it("settles a pending AskUser before replacing its handler", async () => {
+  const { AskUserHandler } = await import("../askUser/modal");
+  const oldHandler = new AskUserHandler(() => rt.chatPanel);
+  rt.askUserHandler = oldHandler;
+  const response = oldHandler.requestInput({ sessionId: "s1", requestId: "q1", questions: [{ question: "Continue?", options: [] }] });
+  await restartBackendConnection(context, process.execPath);
+  await expect(response).resolves.toEqual({ cancelled: true });
+  expect(rt.chatPanel.setAskUserDialogState).toHaveBeenLastCalledWith(null);
+  expect(rt.activeAskUserRequest).toBeNull();
+  expect(rt.askUserHandler).not.toBe(oldHandler);
+});

@@ -628,7 +628,7 @@ describe("VSIX release manifest", () => {
     expect(releaseChecklist).toContain("dedicated ACP reset route");
   });
 
-  it("keeps VSIX 0.0.28 release metadata aligned", () => {
+  it("keeps VSIX 0.0.29 release metadata aligned", () => {
     const packageLock = JSON.parse(readSource("package-lock.json")) as {
       version: string;
       packages: Record<string, { version?: string }>;
@@ -637,11 +637,11 @@ describe("VSIX release manifest", () => {
     const readme = readSource("README.md");
     const workflow = readSource(".github", "workflows", "cd.yml");
 
-    expect(packageJson.version).toBe("0.0.28");
-    expect(packageLock.version).toBe("0.0.28");
-    expect(packageLock.packages[""].version).toBe("0.0.28");
-    expect(versionSource).toContain('PACKAGE_VERSION = "0.0.28"');
-    expect(readme).toContain("v0.0.28-icode-v0.27.1");
+    expect(packageJson.version).toBe("0.0.29");
+    expect(packageLock.version).toBe("0.0.29");
+    expect(packageLock.packages[""].version).toBe("0.0.29");
+    expect(versionSource).toContain('PACKAGE_VERSION = "0.0.29"');
+    expect(readme).toContain("v0.0.29-icode-v0.28.0");
     expect(workflow).toMatch(/VSIX release tag to create, for example v\d+\.\d+\.\d+-icode-v\d+\.\d+\.\d+/);
   });
 
@@ -1967,4 +1967,18 @@ it("documents frontend drafts separately from backend session replay", () => {
   expect(decisions).toContain("Drafts are not persisted across webview disposal");
   expect(decisions).toContain("Clone never forks a chat session");
   expect(decisions).toContain("not interrupted backend execution recovery");
+});
+
+it("keeps upstream ACP test assets out of the runtime and runs both integration layers", () => {
+  const pin = JSON.parse(readSource("tests", "support", "icode-upstream.json"));
+  expect(pin.repository).toBe("openJiuwen-ai/iCode");
+  expect(pin.revision).toMatch(/^[a-f0-9]{40}$/);
+  expect(pin.stubSha256).toMatch(/^[a-f0-9]{64}$/);
+  const ci = readSource(".github", "workflows", "ci.yml");
+  expect(ci).toContain("tests/support/icode-upstream.json");
+  expect(ci).toContain("npm run test:acp-stub");
+  expect(ci).toContain("npm run test:integration");
+  expect(readSource("RELEASE_CHECKLIST.md")).toContain("tests/README.md");
+  expect(readSource("tests", "support", "runtime.ts")).toContain('import { ProcessManager }');
+  expect(readSource("tests", "integration", "chrys-binary.test.ts")).not.toContain("class ChrysProcess");
 });

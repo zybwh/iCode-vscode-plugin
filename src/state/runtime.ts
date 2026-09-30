@@ -112,6 +112,7 @@ export class ExtensionRuntime {
 
   // rendering state
   activeAgentMessageId: string | null = null;
+  activeAgentSourceMessageId: string | null = null;
   activeAgentText = "";
   activeThoughtMessageId: string | null = null;
   activeThoughtText = "";
@@ -152,6 +153,7 @@ export class ExtensionRuntime {
 
   resetRenderState(resetCounter = false): void {
     this.activeAgentMessageId = null;
+    this.activeAgentSourceMessageId = null;
     this.activeAgentText = "";
     this.activeThoughtMessageId = null;
     this.activeThoughtText = "";
@@ -208,6 +210,7 @@ export class ExtensionRuntime {
 
   dropSession(): Promise<void> {
     if (!this.sessionManager) return Promise.resolve();
+    this.approvalHandler?.resolve();
     this.askUserHandler?.cancelActive("session-closed");
     return Promise.all([
       this.sessionManager.cancel().catch(() => {}),
