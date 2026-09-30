@@ -209,16 +209,54 @@ export interface InstallDependencies {
     extract: typeof extractBinary;
     validate: typeof validateRuntime;
 }
-const installs = new Map<string, Promise<string>>();
-/** Unique candidates + atomic pointer keep any previous working runtime intact. */
+interface SharedInstall {
+    operation: Promise<string>;
+    controller: AbortController;
+    listeners: Set<InstallProgress>;
+    callers: number;
+    aborted: number;
+}
+const installs = new Map<string, SharedInstall>();
+/**
+ * Unique candidates + atomic pointer keep any previous working runtime intact.
+ * Concurrent calls for one storage share a single install: every caller receives
+ * progress, and the download is aborted only once every caller has cancelled.
+ */
 export function installRuntime(storage: string, signal: AbortSignal, progress: InstallProgress, dependencies: Partial<InstallDependencies> = {}, target = runtimeTarget()): Promise<string> {
     const key = path.resolve(storage);
-    const pending = installs.get(key);
-    if (pending)
-        return pending;
-    const operation = performInstall(key, signal, progress, { download, extract: extractBinary, validate: validateRuntime, ...dependencies }, target).finally(() => installs.delete(key));
-    installs.set(key, operation);
-    return operation;
+    let shared = installs.get(key);
+    if (!shared) {
+        const controller = new AbortController();
+        const listeners = new Set<InstallProgress>();
+        const operation = performInstall(key, controller.signal, (stage, bytes, total) => {
+            for (const listener of listeners) listener(stage, bytes, total);
+        }, { download, extract: extractBinary, validate: validateRuntime, ...dependencies }, target).finally(() => installs.delete(key));
+        shared = { operation, controller, listeners, callers: 0, aborted: 0 };
+        installs.set(key, shared);
+    }
+    const current = shared;
+    current.callers += 1;
+    current.listeners.add(progress);
+    let leave: ((reason: unknown) => void) | undefined;
+    // A caller that cancels stops waiting while other callers keep the install alive;
+    // when the last caller cancels, the install itself aborts and cleans up first.
+    const cancelled = new Promise<never>((_, reject) => { leave = reject; });
+    const onAbort = () => {
+        current.listeners.delete(progress);
+        current.aborted += 1;
+        if (current.aborted >= current.callers)
+            current.controller.abort(signal.reason);
+        else
+            leave?.(signal.reason);
+    };
+    if (signal.aborted)
+        onAbort();
+    else
+        signal.addEventListener("abort", onAbort, { once: true });
+    return Promise.race([current.operation, cancelled]).finally(() => {
+        signal.removeEventListener("abort", onAbort);
+        current.listeners.delete(progress);
+    });
 }
 async function performInstall(storage: string, signal: AbortSignal, progress: InstallProgress, io: InstallDependencies, target: RuntimeTarget): Promise<string> {
     const root = path.join(storage, "runtimes");

@@ -106,3 +106,23 @@ describe('managed runtime cleanup', () => {
         expect(await managedRuntime(root)).toContain(active);
     }));
 });
+describe('shared installation requests', () => {
+    it('reports progress to every caller and keeps installing until all callers cancel', async () => temporary(async (root) => {
+        let release!: () => void;
+        const gate = new Promise<void>((resolve) => { release = resolve; });
+        const io = dependencies();
+        io.validate = vi.fn(async () => { await gate; });
+        const firstController = new AbortController();
+        const firstStages: string[] = [], secondStages: string[] = [];
+        const first = installRuntime(root, firstController.signal, (stage) => firstStages.push(stage), io);
+        const second = installRuntime(root, new AbortController().signal, (stage) => secondStages.push(stage), io);
+        await vi.waitFor(() => expect(io.validate).toHaveBeenCalled());
+        firstController.abort();
+        await expect(first).rejects.toBeDefined();
+        release();
+        expect(await second).toContain(target.launcher);
+        expect(secondStages).toContain('ready');
+        expect(firstStages).toContain('download');
+        expect(firstStages).not.toContain('ready');
+    }));
+});
