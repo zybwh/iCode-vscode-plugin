@@ -1,5 +1,17 @@
 import { formatCount } from "../../common/utils";
 
+const INLINE_IMAGE_TYPES = new Set(["image/png", "image/jpeg", "image/gif", "image/webp"]);
+
+/**
+ * Build a data: URI for an agent/tool supplied image. Only raster types are allowed:
+ * SVG and other document types can carry script or markup and never render inline.
+ */
+export function imageDataUri(mimeType: string | undefined, data: string | undefined): string | undefined {
+  const type = (mimeType ?? "").trim().toLowerCase();
+  if (!INLINE_IMAGE_TYPES.has(type) || !data || !/^[A-Za-z0-9+/=\s]+$/.test(data)) return undefined;
+  return `data:${type};base64,${data}`;
+}
+
 export function el(tag: string, attrs: Record<string, string | undefined> = {}, ...children: (string | Node)[]): HTMLElement {
   const e = document.createElement(tag);
   for (const [k, v] of Object.entries(attrs)) {

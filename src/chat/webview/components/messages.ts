@@ -1,6 +1,6 @@
 import type { ChatMessage } from "../../provider";
 import { state } from "../state";
-import { el, formatTime, formatDurationMs } from "../helpers";
+import { el, formatTime, formatDurationMs, imageDataUri } from "../helpers";
 import { renderMarkdown } from "../renderer";
 import { processThinkTags } from "../thinkTags";
 import { renderToolCall, effectiveToolStatus, normalizeToolKind, toolKindLabel } from "./toolCards";
@@ -65,7 +65,7 @@ function renderUserContent(msg: ChatMessage): HTMLElement {
       const meta = [image.mimeType, size, compressed].filter(Boolean).join(" · ");
       return el("figure", { class: "image-attachment" },
         el("img", {
-          src: `data:${image.mimeType};base64,${image.data}`,
+          src: imageDataUri(image.mimeType, image.data),
           alt: image.name,
           loading: "lazy",
         }),

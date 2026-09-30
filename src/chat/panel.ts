@@ -1,6 +1,7 @@
 import type { TextAttachment } from "../context/attachments";
 import type { CompanionViewState } from "../companion/types";
 import * as vscode from "vscode";
+import { randomBytes } from "node:crypto";
 import type { ChatMessage } from "./provider";
 import type { ContentBlock, ModelSummary, PermissionOption, PlanEntry, ProfileSummary, RequestInputAnswer, RequestInputQuestion, SessionInfo } from "../acp/types";
 import { rt, bindRuntime, currentRuntime, focusRuntime, scheduleIdleRuntimeRelease } from "../state/runtime";
@@ -11,6 +12,9 @@ import { logError, recordDebugEvent } from "../common/logging";
 import { runtimeVisionEnabled } from "../common/runtimeUtils";
 import { ReadyMessageQueue } from "./readyMessageQueue";
 import type { ChatConnectionState } from "./webview/connectionPresentation";
+
+/** Changes once per extension-host start so rebuilt bundles are not served from cache. */
+const WEBVIEW_ASSET_VERSION = Date.now().toString(36);
 
 export interface ChatModelDialogState {
   models: ModelSummary[];
@@ -788,23 +792,32 @@ export class ChatPanel {
   }
 
   private _getHtml(context: vscode.ExtensionContext): string {
-    const webviewUri = vscode.Uri.joinPath(context.extensionUri, "dist", "webview.js");
-    const styleUri = vscode.Uri.joinPath(context.extensionUri, "dist", "theme.css");
-    const cacheBust = Date.now().toString();
+    const webview = this.panel.webview;
+    const scriptUri = webview.asWebviewUri(vscode.Uri.joinPath(context.extensionUri, "dist", "webview.js")).with({ query: WEBVIEW_ASSET_VERSION });
+    const styleUri = webview.asWebviewUri(vscode.Uri.joinPath(context.extensionUri, "dist", "theme.css")).with({ query: WEBVIEW_ASSET_VERSION });
+    const nonce = randomBytes(16).toString("base64");
     const language = resolveUiLanguage(vscode.workspace.getConfiguration("chrys").get<string>("ui.language"), vscode.env.language);
+    const csp = [
+      "default-src 'none'",
+      `style-src ${webview.cspSource}`,
+      `script-src 'nonce-${nonce}'`,
+      `img-src ${webview.cspSource} data:`,
+      "base-uri 'none'",
+      "form-action 'none'",
+    ].join("; ");
 
     return `<!DOCTYPE html>
 <html lang="${language}">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${this.panel.webview.cspSource}; script-src ${this.panel.webview.cspSource}; img-src ${this.panel.webview.cspSource} data:;">
-  <link rel="stylesheet" href="${this.panel.webview.asWebviewUri(styleUri).with({ query: cacheBust })}">
+  <meta http-equiv="Content-Security-Policy" content="${csp};">
+  <link rel="stylesheet" href="${styleUri}">
   <title>iCode Chat</title>
 </head>
 <body>
   <div id="app" data-ui-language="${language}"></div>
-  <script src="${this.panel.webview.asWebviewUri(webviewUri)}"></script>
+  <script nonce="${nonce}" src="${scriptUri}"></script>
 </body>
 </html>`;
   }

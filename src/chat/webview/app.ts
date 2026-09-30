@@ -18,8 +18,8 @@ import type {
   ChatPanelState,
   ChatSessionsSidebarState,
 } from "../panel";
-import { el, formatDurationMs, formatClock, tokenValueOrDash, formatJson, shortSessionId, formatCountLabel } from "./helpers";
-import { renderMarkdown } from "./renderer";
+import { el, formatDurationMs, formatClock, tokenValueOrDash, formatJson, shortSessionId, formatCountLabel, imageDataUri } from "./helpers";
+import { isInsideUntrustedMarkup, renderMarkdown } from "./renderer";
 import { shellCommandFromPrompt } from "./shellPrompt";
 import { processThinkTags } from "./thinkTags";
 import {
@@ -1488,6 +1488,8 @@ slashHelp.addEventListener("click", (event) => {
 messageArea.addEventListener("click", (event) => {
   const target = event.target;
   if (!(target instanceof HTMLElement)) return;
+  // Action attributes are only honoured on extension-rendered controls.
+  if (isInsideUntrustedMarkup(target)) return;
   const sleepSkipId = target.dataset.sleepSkipId;
   if (sleepSkipId) {
     vscode.postMessage({ type: "skipSleep", toolCallId: sleepSkipId });
@@ -2890,7 +2892,7 @@ function renderPendingImages(): void {
       .join(" · ");
     return el("div", { class: "attachment-chip", title: `${image.name} · ${meta}` },
       el("img", {
-        src: `data:${image.mimeType};base64,${image.data}`,
+        src: imageDataUri(image.mimeType, image.data),
         alt: image.name,
       }),
       el("span", { class: "attachment-chip-text", title: image.name },

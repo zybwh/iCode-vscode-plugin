@@ -3,7 +3,7 @@ import type { ChatMessage } from "../../provider";
 import { objectValue, stringField, numberField } from "../../../common/utils";
 import { normalizeToolKind } from "../../../common/toolRendering";
 import { state } from "../state";
-import { el, formatJson } from "../helpers";
+import { el, formatJson, imageDataUri } from "../helpers";
 import { renderMarkdown } from "../renderer";
 
 export { normalizeToolKind } from "../../../common/toolRendering";
@@ -223,7 +223,7 @@ export function renderStructuredToolContent(blocks: ContentBlock[]): HTMLElement
       if (block.type === "image") {
         return el("img", {
           class: "tool-structured-image",
-          src: `data:${block.mimeType};base64,${block.data}`,
+          src: imageDataUri(block.mimeType, block.data),
           alt: toolText("Tool image", "工具图片"),
         });
       }
