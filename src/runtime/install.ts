@@ -161,10 +161,33 @@ export async function managedRuntime(storage: string): Promise<string | null> {
 }
 /** Superseded runtimes are kept for a while because another window may still run them. */
 export const STALE_RUNTIME_GRACE_MS = 7 * 24 * 60 * 60 * 1000;
+const SUPERSEDED_RECORD = "superseded.json";
+async function readSupersededRecord(root: string): Promise<Record<string, number>> {
+    try {
+        const data = JSON.parse(await fs.readFile(path.join(root, SUPERSEDED_RECORD), "utf8")) as unknown;
+        if (!data || typeof data !== "object")
+            return {};
+        return Object.fromEntries(Object.entries(data as Record<string, unknown>).filter((entry): entry is [string, number] => typeof entry[1] === "number"));
+    }
+    catch {
+        return {};
+    }
+}
+async function writeSupersededRecord(root: string, record: Record<string, number>): Promise<void> {
+    await fs.writeFile(path.join(root, SUPERSEDED_RECORD), JSON.stringify(record, null, 2)).catch(() => { });
+}
+/** Start the grace period of a runtime that was just replaced as the active one. */
+async function markSuperseded(root: string, directory: string, now = Date.now()): Promise<void> {
+    const record = await readSupersededRecord(root);
+    record[directory] = now;
+    await writeSupersededRecord(root, record);
+}
 /**
  * Best-effort removal of managed runtimes that are no longer active. Each install keeps
  * the previous runtime intact for atomic activation; without pruning every reinstall or
  * upgrade leaves a full runtime (hundreds of MB) behind in extension global storage.
+ * The grace period counts from when a runtime was first seen superseded (recorded in
+ * superseded.json), never from its install time, because another window may still run it.
  */
 export async function pruneStaleRuntimes(storage: string, now = Date.now(), graceMs = STALE_RUNTIME_GRACE_MS): Promise<string[]> {
     const root = path.join(storage, "runtimes");
@@ -178,21 +201,40 @@ export async function pruneStaleRuntimes(storage: string, now = Date.now(), grac
     catch {
         return [];
     }
+    const record = await readSupersededRecord(root);
+    const next: Record<string, number> = {};
     const removed: string[] = [];
     for (const entry of entries) {
-        if (!entry.isDirectory() || entry.name === active || !/^icode-[a-zA-Z0-9.-]+$/.test(entry.name))
+        if (!entry.isDirectory())
             continue;
         const directory = path.join(root, entry.name);
+        if (entry.name.startsWith(".trash-")) {
+            // Left over from an interrupted removal; nothing can be running from it.
+            await fs.rm(directory, { recursive: true, force: true }).catch(() => { });
+            continue;
+        }
+        if (entry.name === active || !/^icode-[a-zA-Z0-9.-]+$/.test(entry.name))
+            continue;
+        const supersededAt = record[entry.name] ?? now;
+        if (now - supersededAt < graceMs) {
+            next[entry.name] = supersededAt;
+            continue;
+        }
+        // Rename first: on Windows a runtime still in use cannot be renamed, so it is kept
+        // whole for a later prune instead of being half deleted.
+        const trash = path.join(root, `.trash-${entry.name}`);
         try {
-            if (now - (await fs.stat(directory)).mtimeMs < graceMs)
-                continue;
-            await fs.rm(directory, { recursive: true, force: true });
-            removed.push(entry.name);
+            await fs.rename(directory, trash);
         }
         catch {
-            // A runtime still in use (for example on Windows) is retried on a later prune.
+            next[entry.name] = supersededAt;
+            continue;
         }
+        await fs.rm(trash, { recursive: true, force: true }).catch(() => { });
+        removed.push(entry.name);
     }
+    if (JSON.stringify(next) !== JSON.stringify(record))
+        await writeSupersededRecord(root, next);
     return removed;
 }
 async function activeRuntimeDirectory(root: string): Promise<string | null> {
@@ -288,11 +330,8 @@ async function performInstall(storage: string, signal: AbortSignal, progress: In
         const previous = await activeRuntimeDirectory(root);
         await fs.rename(pointer, path.join(root, "active.json"));
         activated = true;
-        // Start the superseded runtime's grace period now; pruning keys off its mtime.
-        if (previous && previous !== directory) {
-            const now = new Date();
-            await fs.utimes(path.join(root, previous), now, now).catch(() => { });
-        }
+        if (previous && previous !== directory)
+            await markSuperseded(root, previous);
         await pruneStaleRuntimes(storage).catch(() => []);
         progress("ready");
         return launcher;

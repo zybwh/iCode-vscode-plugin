@@ -121,7 +121,9 @@ async function activateRuntime(context: vscode.ExtensionContext): Promise<ChrysA
   // Let VS Code finish activation while the external runtime warms up. The
   // webview stays visibly staged and its input remains locked until ACP is ready.
   void connectBackend(context).then(async (connected) => {
-    if (!connected) await offerBackendSetup(context);
+    // A backend that started and then exited is retried automatically; setup is only
+    // offered when no runtime could be started at all.
+    if (!connected && !rt.restartTimer && !rt.shuttingDown) await offerBackendSetup(context);
   }).catch((error) => {
     const message = error instanceof Error ? error.message : String(error);
     logError(`Background ACP startup failed: ${message}`);

@@ -62,6 +62,14 @@ async function stopWindowsProcessTree(pid: number): Promise<void> {
   });
 }
 
+/** start() was superseded by stop(); an intentional shutdown, not a startup failure. */
+export class ProcessStartCancelledError extends Error {
+  constructor() {
+    super("iCode process was stopped while starting");
+    this.name = "ProcessStartCancelledError";
+  }
+}
+
 export class ProcessManager {
   private _state: ProcessState = "stopped";
   private _child: ChildProcess | null = null;
@@ -151,7 +159,7 @@ export class ProcessManager {
     } finally {
       this._cancelStart = null;
     }
-    if (this._child !== child) throw new Error("iCode process was stopped while starting");
+    if (this._child !== child) throw new ProcessStartCancelledError();
 
     // Node can emit both "error" and "exit" for one child; only the first report counts.
     child.on("error", (err: Error) => {
@@ -189,7 +197,7 @@ export class ProcessManager {
     this._client?.transport.detach();
     const child = this._child;
     this._child = null;
-    this._cancelStart?.(new Error("iCode process was stopped while starting"));
+    this._cancelStart?.(new ProcessStartCancelledError());
     if (child) {
       child.removeAllListeners();
       // Keep a late spawn/kill error from surfacing as an unhandled "error" event.

@@ -74,3 +74,27 @@ describe("SessionManager turn ownership", () => {
     expect(manager.state).toBe("idle");
   });
 });
+
+describe("sending right after Stop", () => {
+  it("waits for the cancel to settle and then starts a new turn instead of injecting", async () => {
+    const { acp, raw, prompts } = fakeAcp();
+    const manager = new SessionManager(acp);
+    await manager.newSession("/w");
+    (raw as unknown as { inject: ReturnType<typeof vi.fn> }).inject = vi.fn(async () => {});
+    const first = manager.sendPrompt([{ type: "text", text: "a" }]);
+    const cancelling = manager.cancel();
+    await Promise.resolve();
+    expect(manager.state).toBe("cancelling");
+    let settled = false;
+    const waiting = manager.whenCancelSettled().then(() => { settled = true; });
+    await Promise.resolve();
+    expect(settled).toBe(false);
+    prompts[0].resolve({ stopReason: "cancelled" });
+    await Promise.all([first, cancelling, waiting]);
+    expect(manager.state).toBe("idle");
+    const second = manager.sendPrompt([{ type: "text", text: "b" }]);
+    expect(manager.state).toBe("running");
+    prompts[1].resolve({ stopReason: "end_turn" });
+    await second;
+  });
+});

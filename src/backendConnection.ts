@@ -7,7 +7,7 @@ import * as os from "node:os";
 import * as fs from "node:fs";
 import { managedRuntime } from "./runtime/install";
 import { resolveRuntime } from "./runtime/resolve";
-import { ProcessManager } from "./process/manager";
+import { ProcessManager, ProcessStartCancelledError } from "./process/manager";
 import { SessionManager } from "./session/manager";
 import { ApprovalHandler } from "./approval/modal";
 import { AskUserHandler } from "./askUser/modal";
@@ -76,7 +76,8 @@ export function scheduleRestart(context: vscode.ExtensionContext): void {
     rt.restartTimer = null;
     if (rt.shuttingDown || !rt.processManager || rt.processManager.state !== "stopped" || !rt.currentBinaryPath || !rt.currentCwd) return;
     void connectBackend(context, rt.currentBinaryPath).then((connected) => {
-      if (!connected) scheduleRestart(context);
+      // A failed attempt whose process exited has already rescheduled from the disconnect handler.
+      if (!connected && !rt.restartTimer) scheduleRestart(context);
     }).catch((error) => {
       const message = error instanceof Error ? error.message : String(error);
       logError(`ACP restart failed: ${message}`);
@@ -474,9 +475,18 @@ export async function connectBackendOnce(context: vscode.ExtensionContext, binar
     const client = await rt.processManager.start(binaryPath, buildAcpArgs(config, rt.currentCwd), rt.currentCwd);
     setConnectionState("initializing", rt.currentCwd);
     await onConnected(context, client);
+    // The process can exit while a session restore is in flight; the restore swallows
+    // that error, but the disconnect handler has already reported it and scheduled a
+    // restart. Do not overwrite that state with "ready".
+    if (rt.processManager.state !== "running" || !rt.sessionManager) return false;
     setConnectionState("ready", rt.currentCwd);
     return true;
   } catch (error) {
+    if (error instanceof ProcessStartCancelledError || rt.shuttingDown) {
+      logInfo("ACP startup cancelled by an intentional stop.");
+      clearSessionManager();
+      return false;
+    }
     const message = error instanceof Error ? error.message : String(error);
     logError(`ACP initialization failed: ${message}`);
     recordLifecycleEvent("AcpInitializationFailed", message);
@@ -512,9 +522,7 @@ export function createProcessManager(context: vscode.ExtensionContext): ProcessM
     clearSessionManager();
     setConnectionState("disconnected", String(reason));
     rt.chatPanel?.showReconnectNotice();
-    // An exit during initialize is reported by connectBackendOnce; restarting here too
-    // would race its error handling. Restart retries chain through scheduleRestart itself.
-    if (!rt.connectionInitialization) scheduleRestart(context);
+    scheduleRestart(context);
   }));
   return manager;
 }

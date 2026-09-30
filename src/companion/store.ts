@@ -42,38 +42,45 @@ function readJsonFile(filePath: string): unknown {
 /**
  * The companion view state is rebuilt for every chat state push, and usage XP is awarded
  * on every tool call. Reading and appraising the collection and packs from disk each time
- * blocked the extension host, so both are cached briefly and XP writes are batched.
- * The short TTL still picks up edits made by another window or by hand.
+ * blocked the extension host, so disk reads are cached briefly and XP is batched.
+ * Batched XP is kept as events and replayed onto a fresh read of the file when it is
+ * written, so edits made meanwhile by another window or by hand are not overwritten.
  */
 const COLLECTION_CACHE_TTL_MS = 2000;
 const POOL_CACHE_TTL_MS = 10_000;
 /** Usage XP is flushed at most this often; explicit companion actions write immediately. */
 export const COMPANION_WRITE_DEBOUNCE_MS = 5000;
 
-interface CachedCollection {
-  collection: CompanionCollectionFile;
-  readAt: number;
-  options: CompanionLoadOptions;
-  dirty: boolean;
+interface PendingGrowth {
+  fingerprint: string;
+  event: CompanionGrowthEvent;
+  at: Date;
 }
 
-const collectionCache = new Map<string, CachedCollection>();
+const diskCache = new Map<string, { collection: CompanionCollectionFile; readAt: number }>();
+const pendingGrowth = new Map<string, { options: CompanionLoadOptions; events: PendingGrowth[] }>();
 const poolCache = new Map<string, { pool: CompanionPoolCard[]; readAt: number }>();
 let flushTimer: ReturnType<typeof setTimeout> | null = null;
 
-function cloneCollection(collection: CompanionCollectionFile): CompanionCollectionFile {
-  return structuredClone(collection);
+function applyPendingGrowth(collection: CompanionCollectionFile, events: PendingGrowth[]): CompanionCollectionFile {
+  for (const pending of events) {
+    const card = collection.cards.find((item) => item.fingerprint === pending.fingerprint);
+    if (card) card.growth = applyCompanionGrowthEvent(card.growth, pending.event, pending.at);
+  }
+  return collection;
 }
 
-function readCollection(options: CompanionLoadOptions): CompanionCollectionFile {
+function readCollection(options: CompanionLoadOptions, fresh = false): CompanionCollectionFile {
   const key = collectionPath(options);
-  const cached = collectionCache.get(key);
-  if (cached && (cached.dirty || Date.now() - cached.readAt < COLLECTION_CACHE_TTL_MS)) {
-    return cloneCollection(cached.collection);
+  const cached = diskCache.get(key);
+  let collection: CompanionCollectionFile;
+  if (!fresh && cached && Date.now() - cached.readAt < COLLECTION_CACHE_TTL_MS) {
+    collection = structuredClone(cached.collection);
+  } else {
+    collection = readCollectionFromDisk(options);
+    diskCache.set(key, { collection: structuredClone(collection), readAt: Date.now() });
   }
-  const collection = readCollectionFromDisk(options);
-  collectionCache.set(key, { collection: cloneCollection(collection), readAt: Date.now(), options, dirty: false });
-  return collection;
+  return applyPendingGrowth(collection, pendingGrowth.get(key)?.events ?? []);
 }
 
 function readCollectionFromDisk(options: CompanionLoadOptions): CompanionCollectionFile {
@@ -92,16 +99,20 @@ function writeCollectionToDisk(options: CompanionLoadOptions, collection: Compan
   const target = collectionPath(options);
   fs.mkdirSync(path.dirname(target), { recursive: true });
   fs.writeFileSync(target, `${JSON.stringify(collection, null, 2)}\n`, "utf8");
+  diskCache.set(target, { collection: structuredClone(collection), readAt: Date.now() });
 }
 
-function writeCollection(options: CompanionLoadOptions, collection: CompanionCollectionFile, deferred = false): void {
+/** Explicit actions write immediately; the collection they saved already includes pending XP. */
+function writeCollection(options: CompanionLoadOptions, collection: CompanionCollectionFile): void {
+  writeCollectionToDisk(options, collection);
+  pendingGrowth.delete(collectionPath(options));
+}
+
+function queueGrowth(options: CompanionLoadOptions, pending: PendingGrowth): void {
   const key = collectionPath(options);
-  const entry: CachedCollection = { collection: cloneCollection(collection), readAt: Date.now(), options, dirty: deferred };
-  collectionCache.set(key, entry);
-  if (!deferred) {
-    writeCollectionToDisk(options, collection);
-    return;
-  }
+  const entry = pendingGrowth.get(key) ?? { options, events: [] };
+  entry.events.push(pending);
+  pendingGrowth.set(key, entry);
   flushTimer ??= setTimeout(() => {
     flushTimer = null;
     flushCompanionWrites();
@@ -109,21 +120,21 @@ function writeCollection(options: CompanionLoadOptions, collection: CompanionCol
   flushTimer.unref?.();
 }
 
-/** Persist batched usage XP. Call on shutdown so no progress is lost. */
+/** Persist batched usage XP onto the current file contents. Call on shutdown so no progress is lost. */
 export function flushCompanionWrites(): void {
   if (flushTimer) {
     clearTimeout(flushTimer);
     flushTimer = null;
   }
-  for (const entry of collectionCache.values()) {
-    if (!entry.dirty) continue;
-    entry.dirty = false;
-    entry.readAt = Date.now();
+  for (const [key, entry] of [...pendingGrowth]) {
     try {
-      writeCollectionToDisk(entry.options, entry.collection);
+      // readCollection(fresh) re-reads the file and replays the queued events on top.
+      const collection = readCollection(entry.options, true);
+      writeCollectionToDisk(entry.options, collection);
     } catch {
       // Companion progress is best-effort local state.
     }
+    pendingGrowth.delete(key);
   }
 }
 
@@ -349,7 +360,6 @@ export function awardCompanionExperience(
   if (!active) {
     return loadCompanionViewState(options, now);
   }
-  active.growth = applyCompanionGrowthEvent(active.growth, event, now);
-  writeCollection(options, collection, true);
+  queueGrowth(options, { fingerprint: active.fingerprint, event, at: now });
   return loadCompanionViewState(options, now);
 }

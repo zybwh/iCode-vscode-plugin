@@ -87,6 +87,13 @@ export async function handleSendMessage(text: string, blocks: ContentBlock[]): P
     && rt.currentSessionId === sessionId
     && (promptTurn === null || sessionManager.turn === promptTurn);
 
+  if (sessionManager.state === "cancelling") {
+    // A message sent right after Stop starts a new turn once the cancelled one settles,
+    // instead of being injected into the turn that is shutting down.
+    await sessionManager.whenCancelSettled();
+    if (!ownsTurn()) return;
+  }
+
   if (rt.sessionManager.state === "running" || rt.sessionManager.state === "cancelling") {
     logInfo("Queueing prompt as a mid-run injection.");
     try {

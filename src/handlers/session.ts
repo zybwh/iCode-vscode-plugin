@@ -1,5 +1,4 @@
 import { rt, type ToolSnapshot } from "../state/runtime";
-import { releaseSubAgentState } from "./notifications";
 import { nextMessageId, type ChatMessage } from "../chat/provider";
 import { objectValue, stringField, formatCount } from "../common/utils";
 import { logError } from "../common/logging";
@@ -79,7 +78,8 @@ export function emitSessionDebugEvent(update: SessionUpdate): void {
     // Streams produce one event per message rather than per chunk: per-chunk events
     // flooded the webview and the bounded log buffer used by Doctor and support bundles.
     case "agent_message_chunk":
-      if (!rt.activeAgentMessageId || isIntermediateChunk(update)) {
+      const newSourceMessage = Boolean(update.messageId && rt.activeAgentSourceMessageId && update.messageId !== rt.activeAgentSourceMessageId);
+      if (!rt.activeAgentMessageId || newSourceMessage || isIntermediateChunk(update)) {
         rt.chatPanel?.appendDebugEvent("AgentMessage", `stream started (${contentText(update.content).length} chars)`);
       }
       break;
@@ -292,7 +292,6 @@ export function handleToolCallProgress(update: ToolCallProgress): void {
   }
   rt.toolSnapshots.set(update.toolCallId, snapshot);
   awardCompanionForToolUpdate(update);
-  if (update.status === "completed" || update.status === "failed") releaseSubAgentState(update.toolCallId);
 
   const patch: Partial<ChatMessage> = {};
   if (update.title !== undefined) patch.toolName = update.title;

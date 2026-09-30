@@ -106,6 +106,23 @@ describe('managed runtime cleanup', () => {
         expect(await managedRuntime(root)).toContain(active);
     }));
 });
+describe('legacy runtime cleanup', () => {
+    it('starts the grace period when an old runtime is first seen, not from its install time', async () => temporary(async (root) => {
+        const io = dependencies();
+        await installRuntime(root, new AbortController().signal, () => { }, io);
+        const runtimes = path.join(root, 'runtimes');
+        // A runtime superseded before supersession was recorded, installed long ago.
+        const legacy = path.join(runtimes, 'icode-0.27.0-legacy');
+        await fs.mkdir(legacy);
+        const old = new Date(Date.now() - 30 * STALE_RUNTIME_GRACE_MS);
+        await fs.utimes(legacy, old, old);
+        const now = Date.now();
+        expect(await pruneStaleRuntimes(root, now)).toEqual([]);
+        expect(await pruneStaleRuntimes(root, now + STALE_RUNTIME_GRACE_MS - 1000)).toEqual([]);
+        expect(await pruneStaleRuntimes(root, now + STALE_RUNTIME_GRACE_MS + 1000)).toEqual(['icode-0.27.0-legacy']);
+        expect((await fs.readdir(runtimes)).some(name => name.includes('legacy'))).toBe(false);
+    }));
+});
 describe('shared installation requests', () => {
     it('reports progress to every caller and keeps installing until all callers cancel', async () => temporary(async (root) => {
         let release!: () => void;

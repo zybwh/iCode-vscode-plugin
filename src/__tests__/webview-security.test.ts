@@ -31,6 +31,9 @@ describe("webview markup hardening", () => {
   it("only builds data URIs for raster image types", () => {
     expect(imageDataUri("image/png", "iVBORw0KGgo=")).toBe("data:image/png;base64,iVBORw0KGgo=");
     expect(imageDataUri("IMAGE/JPEG", "AAAA")).toBe("data:image/jpeg;base64,AAAA");
+    expect(imageDataUri("image/bmp", "Qk0=")).toBe("data:image/bmp;base64,Qk0=");
+    expect(imageDataUri("image/avif", "AAAA")).toBe("data:image/avif;base64,AAAA");
+    expect(imageDataUri("IMAGE/SVG+XML", "PHN2Zz4=")).toBeUndefined();
     expect(imageDataUri("image/svg+xml", "PHN2Zz4=")).toBeUndefined();
     expect(imageDataUri("text/html", "PGgxPg==")).toBeUndefined();
     expect(imageDataUri("image/png", "not base64\"><script>")).toBeUndefined();

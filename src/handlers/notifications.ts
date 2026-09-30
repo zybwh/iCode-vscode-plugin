@@ -609,16 +609,6 @@ function truncateSubAgentText(text: string, limit: number): string {
   return text.length > limit ? `${text.slice(0, limit)}\n... (truncated, ${text.length} total chars)` : text;
 }
 
-/** Drop per-invocation accumulators once the parent tool call that ran the sub-agent ends. */
-export function releaseSubAgentState(parentCallId: string): void {
-  const invocationId = rt.subAgentInvocationByParentCallId.get(parentCallId);
-  if (!invocationId) return;
-  rt.subAgentInvocationByParentCallId.delete(parentCallId);
-  if (rt.pausedSubAgents.has(invocationId)) return;
-  rt.subAgentInnerToolCalls.delete(invocationId);
-  rt.subAgentCommittedCompactions.delete(invocationId);
-}
-
 export function formatSubAgentEvent(
   eventName: string,
   update: SubAgentNotification,

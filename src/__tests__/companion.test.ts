@@ -499,6 +499,29 @@ describe("companion store", () => {
 });
 
 describe("companion store caching", () => {
+  it("keeps edits made by another window while usage XP is waiting to be written", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "companion-merge-"));
+    try {
+      const options = { companionRootDir: root, workspaceDir: undefined };
+      summonCompanion(options, new Date(2026, 5, 24, 10, 0, 0));
+      const file = path.join(root, "collection.json");
+      const before = JSON.parse(fs.readFileSync(file, "utf8")).cards[0].growth.experience as number;
+      awardCompanionExperience(options, { kind: "tool_completed", experience: 8 });
+      // Another window renames the companion and mutes replies before the batch is written.
+      const external = JSON.parse(fs.readFileSync(file, "utf8"));
+      external.cards[0].displayName = "外部改名";
+      external.muted = true;
+      fs.writeFileSync(file, JSON.stringify(external));
+      flushCompanionWrites();
+      const saved = JSON.parse(fs.readFileSync(file, "utf8"));
+      expect(saved.cards[0].displayName).toBe("外部改名");
+      expect(saved.muted).toBe(true);
+      expect(saved.cards[0].growth.experience).toBe(before + 8);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("batches usage XP writes and flushes them on demand", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "companion-cache-"));
     try {

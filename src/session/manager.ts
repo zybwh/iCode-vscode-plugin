@@ -26,6 +26,7 @@ export class SessionManager {
   private _cwd: string | null = null;
   private _turn = 0;
   private _activePrompt: Promise<unknown> | null = null;
+  private _cancelling: Promise<void> | null = null;
 
   constructor(acp: ChrysAcpClient) {
     this.acp = acp;
@@ -250,6 +251,21 @@ export class SessionManager {
   async cancel(options: { waitForTurn?: boolean } = {}): Promise<void> {
     if (!this._currentSessionId) return;
     if (!this.stateMachine.isRunning) return;
+    const cancelling = this._cancel(options);
+    const settled: Promise<void> = cancelling.catch(() => {}).finally(() => {
+      if (this._cancelling === settled) this._cancelling = null;
+    });
+    this._cancelling = settled;
+    return cancelling;
+  }
+
+  /** Resolves once an in-flight cancel() has returned the session to idle. */
+  whenCancelSettled(): Promise<void> {
+    return this._cancelling ?? Promise.resolve();
+  }
+
+  private async _cancel(options: { waitForTurn?: boolean }): Promise<void> {
+    if (!this._currentSessionId) return;
     const turn = this._turn;
     const prompt = this._activePrompt;
     this.stateMachine.transition("cancelling");
