@@ -87,6 +87,7 @@ describe("chat webview interactions", () => {
     expect(document.querySelectorAll("[data-copy-message-id]")).toHaveLength(3);
     expect(document.querySelectorAll(".sidebar-message-list [data-message-id]")).toHaveLength(2);
     host({ type: "updateMessageTextOnly", messageId: "a1", text: "answer, continued" });
+    vi.advanceTimersByTime(32);
     expect(document.querySelector('[data-copy-message-id="a1"]')?.textContent).toContain("answer, continued");
   });
 
@@ -109,6 +110,7 @@ describe("chat webview interactions", () => {
     visible = true;
     for (const message of transcript.messages) view.appendMessage(message);
     transcript.updateMessageTextOnly("stream", "关闭之后收到的正文，继续生成");
+    vi.advanceTimersByTime(32);
     expect(document.querySelectorAll('[data-copy-message-id="stream"]')).toHaveLength(1);
     expect(document.body.textContent).toContain("关闭之后收到的正文，继续生成");
     expect(document.body.textContent).not.toContain("已撤销的回显");

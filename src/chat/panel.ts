@@ -145,7 +145,7 @@ export type HostMessage =
   | { type: "removeMessage"; messageId: string }
   | { type: "clearMessages" }
   | { type: "setState"; state: ChatPanelState }
-  | { type: "setComposer"; text: string }
+  | { type: "setComposer"; text: string; restore?: boolean }
   | { type: "addTextAttachment"; attachment: TextAttachment }
   | { type: "reconnectNotice" }
   | { type: "debugEvent"; kind: string; detail: string }
@@ -678,10 +678,11 @@ export class ChatPanel {
     this._post({type:"addTextAttachment",attachment});
   }
 
-  setComposer(text: string): void {
+  setComposer(text: string, options?: { restore: boolean }): void {
     if (this.disposed) return;
-    this.owner.composerDraft = text;
-    this._post({ type: "setComposer", text });
+    // The webview arbitrates again because a new draft may be in flight to the host.
+    if (!options?.restore || !this.owner.composerDraft) this.owner.composerDraft = text;
+    this._post({ type: "setComposer", text, ...(options?.restore ? { restore: true } : {}) });
   }
 
   showReconnectNotice(): void {

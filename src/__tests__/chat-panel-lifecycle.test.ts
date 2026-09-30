@@ -1,3 +1,4 @@
+import { handleUserInjectResult } from "../handlers/notifications";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const harness = vi.hoisted(() => ({
@@ -377,6 +378,38 @@ describe("chat panel lifecycle", () => {
     first.receive({ type: "webviewReady" });
     expect(first.postMessage).toHaveBeenCalledWith({ type: "setComposer", text: "draft A\ncontinued" });
     expect(b.composerDraft).toBe("draft B");
+  });
+
+  it("keeps the host draft when a rejected prompt restoration races with new typing", () => {
+    const panel = openChat();
+    panel.receive({ type: "webviewReady" });
+    panel.receive({ type: "composerDraft", text: "new draft" } as never);
+    rt.chatPanel!.setComposer("rejected prompt", { restore: true });
+    expect(rt.composerDraft).toBe("new draft");
+    expect(panel.postMessage).toHaveBeenLastCalledWith({ type: "setComposer", text: "rejected prompt", restore: true });
+    // The webview's authoritative acknowledgement preserves the same value on reload.
+    panel.receive({ type: "composerDraft", text: "new draft" } as never);
+    panel.receive({ type: "webviewReady" });
+    expect(panel.postMessage).toHaveBeenCalledWith({ type: "setComposer", text: "new draft" });
+  });
+
+  it("marks backend injection results as restorations instead of explicit draft replacements", () => {
+    const panel = openChat(); panel.receive({ type: "webviewReady" });
+    rt.currentSessionId = "s1";
+    panel.receive({ type: "composerDraft", text: "new draft" } as never);
+    for (const consumed of [false, true]) {
+      handleUserInjectResult({ sessionId: "s1", text: "old injection", consumed });
+      expect(panel.postMessage).toHaveBeenLastCalledWith({ type: "setComposer", text: consumed ? "" : "old injection", restore: true });
+      expect(rt.composerDraft).toBe("new draft");
+    }
+  });
+
+  it("retains an empty-draft restoration until the webview is ready", () => {
+    const panel = openChat();
+    rt.chatPanel!.setComposer("rejected prompt", { restore: true });
+    expect(rt.composerDraft).toBe("rejected prompt");
+    panel.receive({ type: "webviewReady" });
+    expect(panel.postMessage).toHaveBeenCalledWith({ type: "setComposer", text: "rejected prompt", restore: true });
   });
 
   it("ignores composer updates from a disposed panel after replacement", () => {

@@ -17,6 +17,7 @@ Run from the repository root:
 ```bash
 npm run lint
 npm test
+npm run test:webview
 npm run build
 npm run package
 npm run package -- --target linux-x64 --binary /path/to/chrys
@@ -24,7 +25,9 @@ npm run package -- --target linux-x64 --binary /path/to/chrys
 
 Lint covers both extension-host and webview TypeScript. Unit tests include webview startup, prompt preservation, sessions, activity updates, responsive navigation, and ACP transport shutdown.
 
-The lint, unit test, build, universal package, and at least one platform package smoke must pass before a release candidate is handed to manual QA.
+Install the pinned Chromium test browser with `uv run tests/webview/browser.py --install` before the first browser run. See `tests/README.md` for the TUI-derived scenario mapping and coverage limits.
+
+The lint, unit test, browser test, build, universal package, and at least one platform package smoke must pass before a release candidate is handed to manual QA.
 
 Universal VSIX packages must not include `extension/bin/` or `extension/runtime/`. Platform VSIX packages include a prepared target runtime under `extension/runtime/`, or a target-matching release-built binary under `extension/bin/` with notices. Their `extension.vsixmanifest` must set `TargetPlatform`.
 
@@ -38,7 +41,7 @@ Universal VSIX packages must not include `extension/bin/` or `extension/runtime/
 
 ## GitHub Release
 
-The CD workflow is manual-only. Creating a GitHub release or tag must not automatically start CD, because release tags such as `v0.0.29-icode-v0.28.0` are VSIX tags, not iCode CLI runtime tags.
+The CD workflow is manual-only. Creating a GitHub release or tag must not automatically start CD, because release tags such as `v0.0.30-icode-v0.28.0` are VSIX tags, not iCode CLI runtime tags.
 
 When using CD to publish platform VSIX packages, pass both:
 
