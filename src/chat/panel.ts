@@ -332,6 +332,30 @@ type SessionsSidebarRequestHandler = (
   payload?: { id: string; cwd?: string },
 ) => void;
 
+/** Host-side handlers for webview messages; cleared together when the panel is disposed. */
+interface PanelHandlers {
+  send: SendHandler;
+  cancel: CancelHandler;
+  command: CommandHandler;
+  toolDiff: ToolDiffHandler;
+  openFile: OpenFileHandler;
+  modelDialogRefresh: ModelDialogRefreshHandler;
+  modelDialogSave: ModelDialogSaveHandler;
+  modelDialogDelete: ModelDialogDeleteHandler;
+  modelDialogSetActive: ModelDialogSetActiveHandler;
+  agentDialogRefresh: AgentDialogRefreshHandler;
+  agentDialogSave: AgentDialogSaveHandler;
+  agentDialogDelete: AgentDialogDeleteHandler;
+  agentDialogSetActive: AgentDialogSetActiveHandler;
+  inlineDialogAction: InlineDialogActionHandler;
+  inlineDialogClosed: InlineDialogClosedHandler;
+  approvalDialogDecision: ApprovalDialogDecisionHandler;
+  askUserDialogResponse: AskUserDialogResponseHandler;
+  approvalModeSelect: ApprovalModeSelectHandler;
+  sleepSkip: SleepSkipHandler;
+  sessionsSidebarRequest: SessionsSidebarRequestHandler;
+}
+
 export class ChatPanel {
   private panel: vscode.WebviewPanel;
   private disposed = false;
@@ -341,29 +365,10 @@ export class ChatPanel {
   private lastAskUser: ChatAskUserDialogState | null = null;
   private companionAssetBaseUri: string;
   private readonly readyMessages: ReadyMessageQueue<HostMessage>;
+  private handlers: Partial<PanelHandlers> = {};
   /** Latest streamed text per message, flushed at most every STREAM_FLUSH_MS. */
   private readonly pendingText = new Map<string, string>();
   private textFlushTimer: ReturnType<typeof setTimeout> | null = null;
-  private _sendHandler: SendHandler | null = null;
-  private _cancelHandler: CancelHandler | null = null;
-  private _commandHandler: CommandHandler | null = null;
-  private _toolDiffHandler: ToolDiffHandler | null = null;
-  private _openFileHandler: OpenFileHandler | null = null;
-  private _modelDialogRefreshHandler: ModelDialogRefreshHandler | null = null;
-  private _modelDialogSaveHandler: ModelDialogSaveHandler | null = null;
-  private _modelDialogDeleteHandler: ModelDialogDeleteHandler | null = null;
-  private _modelDialogSetActiveHandler: ModelDialogSetActiveHandler | null = null;
-  private _agentDialogRefreshHandler: AgentDialogRefreshHandler | null = null;
-  private _agentDialogSaveHandler: AgentDialogSaveHandler | null = null;
-  private _agentDialogDeleteHandler: AgentDialogDeleteHandler | null = null;
-  private _agentDialogSetActiveHandler: AgentDialogSetActiveHandler | null = null;
-  private _inlineDialogActionHandler: InlineDialogActionHandler | null = null;
-  private _inlineDialogClosedHandler: InlineDialogClosedHandler | null = null;
-  private _approvalDialogDecisionHandler: ApprovalDialogDecisionHandler | null = null;
-  private _askUserDialogResponseHandler: AskUserDialogResponseHandler | null = null;
-  private _approvalModeSelectHandler: ApprovalModeSelectHandler | null = null;
-  private _sleepSkipHandler: SleepSkipHandler | null = null;
-  private _sessionsSidebarRequestHandler: SessionsSidebarRequestHandler | null = null;
 
   private readonly owner = currentRuntime();
 
@@ -406,75 +411,75 @@ export class ChatPanel {
             this.appendDebugEvent("ImageSend", `${msg.images.length} image(s)`);
           }
           if (msg.attachments?.length && rt.sessionManager?.state !== "idle") break;
-          this._sendHandler?.(msg.text, [
+          this.handlers.send?.(msg.text, [
             { type: "text", text: msg.text },
             ...(msg.attachments ?? []).slice(0,20).filter(a=>typeof a.text==="string").map(a=>({type:"text" as const,text:a.text.slice(0,120000)})),
             ...(msg.images ?? []).map((image) => ({ type: "image" as const, ...image })),
           ]);
           break;
         case "cancel":
-          this._cancelHandler?.();
+          this.handlers.cancel?.();
           break;
         case "command":
-          this._commandHandler?.(msg.command, msg.arg);
+          this.handlers.command?.(msg.command, msg.arg);
           break;
         case "modelDialogRefresh":
-          this._modelDialogRefreshHandler?.();
+          this.handlers.modelDialogRefresh?.();
           break;
         case "modelDialogSave":
-          this._modelDialogSaveHandler?.(msg.model);
+          this.handlers.modelDialogSave?.(msg.model);
           break;
         case "modelDialogDelete":
-          this._modelDialogDeleteHandler?.(msg.id);
+          this.handlers.modelDialogDelete?.(msg.id);
           break;
         case "modelDialogSetActive":
-          this._modelDialogSetActiveHandler?.(msg.id);
+          this.handlers.modelDialogSetActive?.(msg.id);
           break;
         case "agentDialogRefresh":
-          this._agentDialogRefreshHandler?.();
+          this.handlers.agentDialogRefresh?.();
           break;
         case "agentDialogSave":
-          this._agentDialogSaveHandler?.(msg.agent);
+          this.handlers.agentDialogSave?.(msg.agent);
           break;
         case "agentDialogDelete":
-          this._agentDialogDeleteHandler?.(msg.name);
+          this.handlers.agentDialogDelete?.(msg.name);
           break;
         case "agentDialogSetActive":
-          this._agentDialogSetActiveHandler?.(msg.name);
+          this.handlers.agentDialogSetActive?.(msg.name);
           break;
         case "inlineDialogAction":
-          this._inlineDialogActionHandler?.(msg.action, { id: msg.id, cwd: msg.cwd, name: msg.name });
+          this.handlers.inlineDialogAction?.(msg.action, { id: msg.id, cwd: msg.cwd, name: msg.name });
           break;
         case "inlineDialogClosed":
           rt.closeInlineDialog();
-          this._inlineDialogClosedHandler?.();
+          this.handlers.inlineDialogClosed?.();
           break;
         case "approvalDialogDecision":
-          this._approvalDialogDecisionHandler?.(msg.optionId, msg.reason);
+          this.handlers.approvalDialogDecision?.(msg.optionId, msg.reason);
           break;
         case "askUserDialogResponse":
-          this._askUserDialogResponseHandler?.(msg.requestId, msg.answers, msg.cancelled, msg.source);
+          this.handlers.askUserDialogResponse?.(msg.requestId, msg.answers, msg.cancelled, msg.source);
           break;
         case "openApprovalPreviewDiff":
           this._openApprovalPreviewDiff(msg.label, msg.before, msg.after).catch(() => {});
           break;
         case "setApprovalMode":
-          this._approvalModeSelectHandler?.(msg.mode);
+          this.handlers.approvalModeSelect?.(msg.mode);
           break;
         case "sessionsSidebarRefresh":
-          this._sessionsSidebarRequestHandler?.("refresh");
+          this.handlers.sessionsSidebarRequest?.("refresh");
           break;
         case "sessionsSidebarAction":
-          this._sessionsSidebarRequestHandler?.(msg.action, { id: msg.id, cwd: msg.cwd });
+          this.handlers.sessionsSidebarRequest?.(msg.action, { id: msg.id, cwd: msg.cwd });
           break;
         case "skipSleep":
-          this._sleepSkipHandler?.(msg.toolCallId);
+          this.handlers.sleepSkip?.(msg.toolCallId);
           break;
         case "openToolDiff":
-          this._toolDiffHandler?.(msg.toolCallId);
+          this.handlers.toolDiff?.(msg.toolCallId);
           break;
         case "openFile":
-          this._openFileHandler?.(msg.path, msg.line);
+          this.handlers.openFile?.(msg.path, msg.line);
           break;
         case "openExternalResource":
           this._openExternalResource(msg.uri).catch(() => {});
@@ -522,109 +527,90 @@ export class ChatPanel {
         // A view closing is not an approval decision or a task cancellation.
         scheduleIdleRuntimeRelease(this.owner);
       }
-      this._sendHandler = null;
-      this._cancelHandler = null;
-      this._commandHandler = null;
-      this._toolDiffHandler = null;
-      this._openFileHandler = null;
-      this._modelDialogRefreshHandler = null;
-      this._modelDialogSaveHandler = null;
-      this._modelDialogDeleteHandler = null;
-      this._modelDialogSetActiveHandler = null;
-      this._agentDialogRefreshHandler = null;
-      this._agentDialogSaveHandler = null;
-      this._agentDialogDeleteHandler = null;
-      this._agentDialogSetActiveHandler = null;
-      this._inlineDialogActionHandler = null;
-      this._inlineDialogClosedHandler = null;
-      this._approvalDialogDecisionHandler = null;
-      this._askUserDialogResponseHandler = null;
-      this._approvalModeSelectHandler = null;
-      this._sleepSkipHandler = null;
-      this._sessionsSidebarRequestHandler = null;
+      this.handlers = {};
     }, this.owner));
   }
 
   // ── Events from host to register ───────────
 
   onSendMessage(handler: SendHandler): void {
-    this._sendHandler = handler;
+    this.handlers.send = handler;
   }
 
   onCancel(handler: CancelHandler): void {
-    this._cancelHandler = handler;
+    this.handlers.cancel = handler;
   }
 
   onCommand(handler: CommandHandler): void {
-    this._commandHandler = handler;
+    this.handlers.command = handler;
   }
 
   onToolDiff(handler: ToolDiffHandler): void {
-    this._toolDiffHandler = handler;
+    this.handlers.toolDiff = handler;
   }
 
   onOpenFile(handler: OpenFileHandler): void {
-    this._openFileHandler = handler;
+    this.handlers.openFile = handler;
   }
 
   onModelDialogRefresh(handler: ModelDialogRefreshHandler): void {
-    this._modelDialogRefreshHandler = handler;
+    this.handlers.modelDialogRefresh = handler;
   }
 
   onModelDialogSave(handler: ModelDialogSaveHandler): void {
-    this._modelDialogSaveHandler = handler;
+    this.handlers.modelDialogSave = handler;
   }
 
   onModelDialogDelete(handler: ModelDialogDeleteHandler): void {
-    this._modelDialogDeleteHandler = handler;
+    this.handlers.modelDialogDelete = handler;
   }
 
   onModelDialogSetActive(handler: ModelDialogSetActiveHandler): void {
-    this._modelDialogSetActiveHandler = handler;
+    this.handlers.modelDialogSetActive = handler;
   }
 
   onAgentDialogRefresh(handler: AgentDialogRefreshHandler): void {
-    this._agentDialogRefreshHandler = handler;
+    this.handlers.agentDialogRefresh = handler;
   }
 
   onAgentDialogSave(handler: AgentDialogSaveHandler): void {
-    this._agentDialogSaveHandler = handler;
+    this.handlers.agentDialogSave = handler;
   }
 
   onAgentDialogDelete(handler: AgentDialogDeleteHandler): void {
-    this._agentDialogDeleteHandler = handler;
+    this.handlers.agentDialogDelete = handler;
   }
 
   onAgentDialogSetActive(handler: AgentDialogSetActiveHandler): void {
-    this._agentDialogSetActiveHandler = handler;
+    this.handlers.agentDialogSetActive = handler;
   }
 
   onInlineDialogAction(handler: InlineDialogActionHandler): void {
-    this._inlineDialogActionHandler = handler;
+    this.handlers.inlineDialogAction = handler;
   }
 
   onInlineDialogClosed(handler: InlineDialogClosedHandler): void {
-    this._inlineDialogClosedHandler = handler;
+    this.handlers.inlineDialogClosed = handler;
   }
 
   onApprovalDialogDecision(handler: ApprovalDialogDecisionHandler): void {
-    this._approvalDialogDecisionHandler = handler;
+    this.handlers.approvalDialogDecision = handler;
   }
 
   onAskUserDialogResponse(handler: AskUserDialogResponseHandler): void {
-    this._askUserDialogResponseHandler = handler;
+    this.handlers.askUserDialogResponse = handler;
   }
 
   onApprovalModeSelect(handler: ApprovalModeSelectHandler): void {
-    this._approvalModeSelectHandler = handler;
+    this.handlers.approvalModeSelect = handler;
   }
 
   onSleepSkip(handler: SleepSkipHandler): void {
-    this._sleepSkipHandler = handler;
+    this.handlers.sleepSkip = handler;
   }
 
   onSessionsSidebarRequest(handler: SessionsSidebarRequestHandler): void {
-    this._sessionsSidebarRequestHandler = handler;
+    this.handlers.sessionsSidebarRequest = handler;
   }
 
   // ── Push messages to webview ───────────────

@@ -77,6 +77,32 @@ export type RollbackResultHandler = (update: RollbackResultNotification) => void
 export type SubAgentHandler = (eventName: string, update: SubAgentNotification) => void;
 export type CompactionHandler = (eventName: string, update: CompactionNotification) => void;
 
+/** Notification events and their handler signatures. */
+interface ClientEvents {
+  sessionUpdate: SessionUpdateHandler;
+  runtimeUpdate: RuntimeUpdateHandler;
+  error: ErrorHandler;
+  warning: WarningHandler;
+  sessionRestored: SessionRestoredHandler;
+  contextCompressed: ContextCompressedHandler;
+  contextPressure: ContextPressureHandler;
+  toolCompacted: ToolCompactedHandler;
+  usageUpdate: UsageUpdateHandler;
+  agentLoad: AgentLoadHandler;
+  approvalReviewed: ApprovalReviewedHandler;
+  profileSwitched: ProfileSwitchedHandler;
+  workspaceUpdated: WorkspaceUpdatedHandler;
+  approvalModeUpdate: ApprovalModeUpdateHandler;
+  userInjectResult: UserInjectResultHandler;
+  rollbackResult: RollbackResultHandler;
+  subAgent: SubAgentHandler;
+  compaction: CompactionHandler;
+}
+
+export interface ClientDisposable {
+  dispose(): void;
+}
+
 function normalizeRuntimeUpdate(params: unknown): RuntimeSnapshot {
   const payload = (params && typeof params === "object") ? params as RuntimeUpdateNotification : {};
   return (payload.runtime && typeof payload.runtime === "object")
@@ -87,24 +113,7 @@ function normalizeRuntimeUpdate(params: unknown): RuntimeSnapshot {
 export class ChrysAcpClient {
   private unavailableInventoryMethods = new Set<string>();
   private acp: AcpClient;
-  private sessionUpdateHandlers: SessionUpdateHandler[] = [];
-  private runtimeUpdateHandlers: RuntimeUpdateHandler[] = [];
-  private errorHandlers: ErrorHandler[] = [];
-  private warningHandlers: WarningHandler[] = [];
-  private sessionRestoredHandlers: SessionRestoredHandler[] = [];
-  private contextCompressedHandlers: ContextCompressedHandler[] = [];
-  private contextPressureHandlers: ContextPressureHandler[] = [];
-  private toolCompactedHandlers: ToolCompactedHandler[] = [];
-  private usageUpdateHandlers: UsageUpdateHandler[] = [];
-  private agentLoadHandlers: AgentLoadHandler[] = [];
-  private approvalReviewedHandlers: ApprovalReviewedHandler[] = [];
-  private profileSwitchedHandlers: ProfileSwitchedHandler[] = [];
-  private workspaceUpdatedHandlers: WorkspaceUpdatedHandler[] = [];
-  private approvalModeUpdateHandlers: ApprovalModeUpdateHandler[] = [];
-  private userInjectResultHandlers: UserInjectResultHandler[] = [];
-  private rollbackResultHandlers: RollbackResultHandler[] = [];
-  private subAgentHandlers: SubAgentHandler[] = [];
-  private compactionHandlers: CompactionHandler[] = [];
+  private readonly handlers = new Map<keyof ClientEvents, Set<ClientEvents[keyof ClientEvents]>>();
   private permissionHandler: PermissionHandler | null = null;
   private inputHandler: InputHandler | null = null;
 
@@ -121,8 +130,22 @@ export class ChrysAcpClient {
 
   // ── Event registration ─────────────────────
 
-  onSessionUpdate(handler: SessionUpdateHandler): void {
-    this.sessionUpdateHandlers.push(handler);
+  /** Register a notification handler; dispose() unregisters it. */
+  private on<K extends keyof ClientEvents>(event: K, handler: ClientEvents[K]): ClientDisposable {
+    let set = this.handlers.get(event);
+    if (!set) this.handlers.set(event, set = new Set());
+    set.add(handler);
+    return { dispose: () => { set.delete(handler); } };
+  }
+
+  private emit<K extends keyof ClientEvents>(event: K, ...args: Parameters<ClientEvents[K]>): void {
+    for (const handler of this.handlers.get(event) ?? []) {
+      (handler as (...values: Parameters<ClientEvents[K]>) => void)(...args);
+    }
+  }
+
+  onSessionUpdate(handler: SessionUpdateHandler): ClientDisposable {
+    return this.on("sessionUpdate", handler);
   }
 
   onRequestPermission(handler: PermissionHandler): void {
@@ -133,72 +156,72 @@ export class ChrysAcpClient {
     this.inputHandler = handler;
   }
 
-  onRuntimeUpdate(handler: RuntimeUpdateHandler): void {
-    this.runtimeUpdateHandlers.push(handler);
+  onRuntimeUpdate(handler: RuntimeUpdateHandler): ClientDisposable {
+    return this.on("runtimeUpdate", handler);
   }
 
-  onError(handler: ErrorHandler): void {
-    this.errorHandlers.push(handler);
+  onError(handler: ErrorHandler): ClientDisposable {
+    return this.on("error", handler);
   }
 
-  onWarning(handler: WarningHandler): void {
-    this.warningHandlers.push(handler);
+  onWarning(handler: WarningHandler): ClientDisposable {
+    return this.on("warning", handler);
   }
 
-  onSessionRestored(handler: SessionRestoredHandler): void {
-    this.sessionRestoredHandlers.push(handler);
+  onSessionRestored(handler: SessionRestoredHandler): ClientDisposable {
+    return this.on("sessionRestored", handler);
   }
 
-  onContextCompressed(handler: ContextCompressedHandler): void {
-    this.contextCompressedHandlers.push(handler);
+  onContextCompressed(handler: ContextCompressedHandler): ClientDisposable {
+    return this.on("contextCompressed", handler);
   }
 
-  onContextPressure(handler: ContextPressureHandler): void {
-    this.contextPressureHandlers.push(handler);
+  onContextPressure(handler: ContextPressureHandler): ClientDisposable {
+    return this.on("contextPressure", handler);
   }
 
-  onToolCompacted(handler: ToolCompactedHandler): void {
-    this.toolCompactedHandlers.push(handler);
+  onToolCompacted(handler: ToolCompactedHandler): ClientDisposable {
+    return this.on("toolCompacted", handler);
   }
 
-  onUsageUpdate(handler: UsageUpdateHandler): void {
-    this.usageUpdateHandlers.push(handler);
+  onUsageUpdate(handler: UsageUpdateHandler): ClientDisposable {
+    return this.on("usageUpdate", handler);
   }
 
-  onAgentLoad(handler: AgentLoadHandler): void {
-    this.agentLoadHandlers.push(handler);
+  onAgentLoad(handler: AgentLoadHandler): ClientDisposable {
+    return this.on("agentLoad", handler);
   }
 
-  onApprovalReviewed(handler: ApprovalReviewedHandler): void {
-    this.approvalReviewedHandlers.push(handler);
+  onApprovalReviewed(handler: ApprovalReviewedHandler): ClientDisposable {
+    return this.on("approvalReviewed", handler);
   }
 
-  onProfileSwitched(handler: ProfileSwitchedHandler): void {
-    this.profileSwitchedHandlers.push(handler);
+  onProfileSwitched(handler: ProfileSwitchedHandler): ClientDisposable {
+    return this.on("profileSwitched", handler);
   }
 
-  onWorkspaceUpdated(handler: WorkspaceUpdatedHandler): void {
-    this.workspaceUpdatedHandlers.push(handler);
+  onWorkspaceUpdated(handler: WorkspaceUpdatedHandler): ClientDisposable {
+    return this.on("workspaceUpdated", handler);
   }
 
-  onApprovalModeUpdate(handler: ApprovalModeUpdateHandler): void {
-    this.approvalModeUpdateHandlers.push(handler);
+  onApprovalModeUpdate(handler: ApprovalModeUpdateHandler): ClientDisposable {
+    return this.on("approvalModeUpdate", handler);
   }
 
-  onUserInjectResult(handler: UserInjectResultHandler): void {
-    this.userInjectResultHandlers.push(handler);
+  onUserInjectResult(handler: UserInjectResultHandler): ClientDisposable {
+    return this.on("userInjectResult", handler);
   }
 
-  onRollbackResult(handler: RollbackResultHandler): void {
-    this.rollbackResultHandlers.push(handler);
+  onRollbackResult(handler: RollbackResultHandler): ClientDisposable {
+    return this.on("rollbackResult", handler);
   }
 
-  onSubAgent(handler: SubAgentHandler): void {
-    this.subAgentHandlers.push(handler);
+  onSubAgent(handler: SubAgentHandler): ClientDisposable {
+    return this.on("subAgent", handler);
   }
 
-  onCompaction(handler: CompactionHandler): void {
-    this.compactionHandlers.push(handler);
+  onCompaction(handler: CompactionHandler): ClientDisposable {
+    return this.on("compaction", handler);
   }
 
   // ── RPC Methods ────────────────────────────
@@ -412,59 +435,59 @@ export class ChrysAcpClient {
       case "_chrys/request_input":
         return this._handleInputRequest(params as RequestInputRequest, respond);
       case "_chrys/runtime_update":
-        this.runtimeUpdateHandlers.forEach((handler) => handler(normalizeRuntimeUpdate(params)));
+        this.emit("runtimeUpdate", normalizeRuntimeUpdate(params));
         break;
       case "_chrys/error":
-        this.errorHandlers.forEach((handler) => handler(params as ChrysErrorNotification));
+        this.emit("error", params as ChrysErrorNotification);
         break;
       case "_chrys/warning":
-        this.warningHandlers.forEach((handler) => handler(params as ChrysWarningNotification));
+        this.emit("warning", params as ChrysWarningNotification);
         break;
       case "_chrys/session_restored":
-        this.sessionRestoredHandlers.forEach((handler) => handler(params as SessionRestoredNotification));
+        this.emit("sessionRestored", params as SessionRestoredNotification);
         break;
       case "_chrys/context_compressed":
-        this.contextCompressedHandlers.forEach((handler) => handler(params as ContextCompressedNotification));
+        this.emit("contextCompressed", params as ContextCompressedNotification);
         break;
       case "_chrys/context_pressure":
-        this.contextPressureHandlers.forEach((handler) => handler(params as ContextPressureNotification));
+        this.emit("contextPressure", params as ContextPressureNotification);
         break;
       case "_chrys/tool_compacted":
-        this.toolCompactedHandlers.forEach((handler) => handler(params as ToolCompactedNotification));
+        this.emit("toolCompacted", params as ToolCompactedNotification);
         break;
       case "_chrys/usage_update":
-        this.usageUpdateHandlers.forEach((handler) => handler(params as UsageUpdateNotification));
+        this.emit("usageUpdate", params as UsageUpdateNotification);
         break;
       case "_chrys/agent_load_started":
       case "_chrys/agent_load_progress":
       case "_chrys/agent_load_finished":
       case "_chrys/agent_load_failed":
-        this.agentLoadHandlers.forEach((handler) => handler(method, params as AgentLoadNotification));
+        this.emit("agentLoad", method, params as AgentLoadNotification);
         break;
       case "_chrys/approval_reviewed":
-        this.approvalReviewedHandlers.forEach((handler) => handler(params as ApprovalReviewedNotification));
+        this.emit("approvalReviewed", params as ApprovalReviewedNotification);
         break;
       case "_chrys/profile_switched":
-        this.profileSwitchedHandlers.forEach((handler) => handler(params as ProfileSwitchedNotification));
+        this.emit("profileSwitched", params as ProfileSwitchedNotification);
         break;
       case "_chrys/workspace_updated":
-        this.workspaceUpdatedHandlers.forEach((handler) => handler(params as WorkspaceUpdatedNotification));
+        this.emit("workspaceUpdated", params as WorkspaceUpdatedNotification);
         break;
       case "_chrys/approval_mode_update":
-        this.approvalModeUpdateHandlers.forEach((handler) => handler(params as ApprovalModeUpdateNotification));
+        this.emit("approvalModeUpdate", params as ApprovalModeUpdateNotification);
         break;
       case "_chrys/user_inject_result":
-        this.userInjectResultHandlers.forEach((handler) => handler(params as UserInjectResultNotification));
+        this.emit("userInjectResult", params as UserInjectResultNotification);
         break;
       case "_chrys/rollback_result":
-        this.rollbackResultHandlers.forEach((handler) => handler(params as RollbackResultNotification));
+        this.emit("rollbackResult", params as RollbackResultNotification);
         break;
       case "_chrys/compaction_started":
       case "_chrys/compaction_finished":
       case "_chrys/sub_agent_compaction_started":
       case "_chrys/sub_agent_compaction_finished":
       case "_chrys/sub_agent_compaction_committed":
-        this.compactionHandlers.forEach((handler) => handler(method, params as CompactionNotification));
+        this.emit("compaction", method, params as CompactionNotification);
         break;
       case "_chrys/sub_agent_invocation_start":
       case "_chrys/sub_agent_tool_call_start":
@@ -475,16 +498,14 @@ export class ChrysAcpClient {
       case "_chrys/sub_agent_resumed":
       case "_chrys/sub_agent_aborted":
       case "_chrys/sub_agent_cascade_aborted":
-        this.subAgentHandlers.forEach((handler) => handler(method, params as SubAgentNotification));
+        this.emit("subAgent", method, params as SubAgentNotification);
         break;
       // Unknown notifications are silently ignored
     }
   }
 
   private _handleSessionUpdate(notification: SessionNotification): void {
-    for (const handler of this.sessionUpdateHandlers) {
-      handler(notification.sessionId, notification.update);
-    }
+    this.emit("sessionUpdate", notification.sessionId, notification.update);
   }
 
   private async _handlePermissionRequest(
