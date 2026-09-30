@@ -36,7 +36,7 @@ class LicensePackagingTests(unittest.TestCase):
 
     def pack(self, *args):
         return subprocess.run([sys.executable, str(self.root / "scripts/pack.py"), *args],
-                              capture_output=True, text=True)
+                              capture_output=True, text=True, encoding="utf-8")
 
     def test_universal_contains_complete_notices(self):
         result = self.pack()
@@ -57,7 +57,7 @@ class LicensePackagingTests(unittest.TestCase):
 
     def test_dependency_upgrade_requires_notice_review(self):
         lock = self.root / "package-lock.json"
-        data = json.loads(lock.read_text())
+        data = json.loads(lock.read_text(encoding="utf-8"))
         data["packages"]["node_modules/marked"]["version"] = "999.0.0"
         lock.write_text(json.dumps(data))
         self.assertIn("version mismatch", self.pack().stderr)

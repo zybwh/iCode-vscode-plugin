@@ -89,8 +89,8 @@ def validate_frontend_licenses(ext_dir: Path) -> list[Path]:
     for name in required:
         if not (ext_dir / name).is_file():
             raise SystemExit(f"required license document missing: {name}")
-    components = json.loads((ext_dir / "licenses/components.json").read_text())
-    lock = json.loads((ext_dir / "package-lock.json").read_text())
+    components = json.loads((ext_dir / "licenses/components.json").read_text(encoding="utf-8"))
+    lock = json.loads((ext_dir / "package-lock.json").read_text(encoding="utf-8"))
     approved = set()
     paths = [ext_dir / name for name in required]
     for component in components:
@@ -111,7 +111,7 @@ def validate_frontend_licenses(ext_dir: Path) -> list[Path]:
         metadata = ext_dir / "dist" / f"{bundle}.meta.json"
         if not metadata.is_file():
             raise SystemExit("build dependency inventory missing; run npm run build")
-        for source in json.loads(metadata.read_text())["inputs"]:
+        for source in json.loads(metadata.read_text(encoding="utf-8"))["inputs"]:
             parts = source.replace("\\", "/").split("node_modules/")
             if len(parts) == 1:
                 continue
@@ -142,10 +142,10 @@ def main() -> None:
 
     license_paths = validate_frontend_licenses(ext_dir)
     pkg_path = ext_dir / "package.json"
-    with open(pkg_path) as f:
+    with open(pkg_path, encoding="utf-8") as f:
         pkg = json.load(f)
     nls_path = ext_dir / "package.nls.json"
-    nls = json.loads(nls_path.read_text()) if nls_path.exists() else {}
+    nls = json.loads(nls_path.read_text(encoding="utf-8")) if nls_path.exists() else {}
 
     def resolve_nls(value: str) -> str:
         if value.startswith("%") and value.endswith("%"):
