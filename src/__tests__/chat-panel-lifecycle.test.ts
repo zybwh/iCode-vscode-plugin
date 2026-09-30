@@ -190,13 +190,14 @@ describe("chat panel lifecycle", () => {
     handleToolCallStart({ sessionUpdate: "tool_call", toolCallId: "t1", title: "Read", status: "in_progress" });
     handleToolCallProgress({ sessionUpdate: "tool_call_update", toolCallId: "t1", status: "completed" });
     const reopened = openChat();
-    const messages = reopened.postMessage.mock.calls.map(([message]) => message);
-    expect(messages).toContainEqual(expect.objectContaining({
-      type: "appendMessage", message: expect.objectContaining({ kind: "agent", text: "before after" }),
-    }));
-    expect(messages).toContainEqual(expect.objectContaining({
-      type: "appendMessage", message: expect.objectContaining({ toolCallId: "t1", toolStatus: "completed" }),
-    }));
+    const replayed = reopened.postMessage.mock.calls
+      .map(([message]) => message)
+      .filter(message => message.type === "appendMessages");
+    expect(replayed).toHaveLength(1);
+    expect(replayed[0].messages).toEqual([
+      expect.objectContaining({ kind: "agent", text: "before after" }),
+      expect.objectContaining({ toolCallId: "t1", toolStatus: "completed" }),
+    ]);
     rt.transcript.clearMessages();
     reopened.dispose();
     expect(openChat().postMessage).not.toHaveBeenCalled();
@@ -266,8 +267,8 @@ describe("chat panel lifecycle", () => {
     host.receive({ type: "webviewReady" });
     const sent = host.postMessage.mock.calls.map(([message]) => message);
     expect(sent[0]).toEqual({ type: "clearMessages" });
-    expect(sent.filter(message => message.type === "appendMessage")).toEqual([
-      { type: "appendMessage", message: expect.objectContaining({ text: "before after" }) },
+    expect(sent.filter(message => message.type === "appendMessage" || message.type === "appendMessages")).toEqual([
+      { type: "appendMessages", messages: [expect.objectContaining({ text: "before after" })] },
     ]);
     expect(sent).toContainEqual({ type: "setState", state: expect.objectContaining({ sessionState: "running" }) });
   });

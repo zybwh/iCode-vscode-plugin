@@ -35,6 +35,8 @@ export interface DebugEvent {
 
 export const state = {
   messages: [] as ChatMessage[],
+  /** O(1) lookup for streamed/tool updates; mirrors `messages`. */
+  messageById: new Map<string, ChatMessage>(),
   messageMap: new Map<string, HTMLElement>(),
   usageHistory: [0] as number[],
   statusRunStartedAt: undefined as number | undefined,

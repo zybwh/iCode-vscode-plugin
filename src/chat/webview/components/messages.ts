@@ -226,7 +226,7 @@ export function finishActiveToolGroup(collapse: boolean, statusBar: HTMLElement)
 
 export function updateToolGroup(group: ToolGroupState, statusBar: HTMLElement): void {
   const groupMessages = group.ids
-    .map((id) => state.messages.find((message) => message.id === id))
+    .map((id) => state.messageById.get(id))
     .filter((message): message is ChatMessage => message !== undefined);
   const total = groupMessages.length;
   const done = groupMessages.filter(isToolDone).length;

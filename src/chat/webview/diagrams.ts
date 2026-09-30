@@ -50,14 +50,40 @@ export function renderTerminalDiagram(source: string): string | null {
       colorMode: "none", useAscii: false, paddingX: 4, paddingY: 2, boxBorderPadding: 1,
     }));
     if (diagram.length > 100000 || !diagram.trim()) return null;
-    result = [...diagram].map(char => wideCharacter(char)
-      ? `<span class="diagram-wide">${escape(char)}</span>`
-      : /[\u2500-\u257f\u2190-\u21ff►▼▲◄]/u.test(char)
-        ? `<span class="diagram-line">${escape(char)}</span>` : escape(char)).join("");
+    result = diagramMarkup(diagram);
   } catch { /* Incomplete or unsupported syntax stays readable as source. */ }
   if (cache.size >= 80) cache.delete(cache.keys().next().value!);
   cache.set(source, result);
   return result;
+}
+
+const LINE_CHARACTER = /[\u2500-\u257f\u2190-\u21ff►▼▲◄]/u;
+
+/**
+ * Wide characters keep one span each (each needs its own cell width), but runs of
+ * box-drawing characters share a span: a large diagram otherwise produced one DOM
+ * node per character.
+ */
+function diagramMarkup(diagram: string): string {
+  const parts: string[] = [];
+  let line = "";
+  const flushLine = () => {
+    if (line) parts.push(`<span class="diagram-line">${escape(line)}</span>`);
+    line = "";
+  };
+  for (const char of diagram) {
+    if (wideCharacter(char)) {
+      flushLine();
+      parts.push(`<span class="diagram-wide">${escape(char)}</span>`);
+    } else if (LINE_CHARACTER.test(char)) {
+      line += char;
+    } else {
+      flushLine();
+      parts.push(escape(char));
+    }
+  }
+  flushLine();
+  return parts.join("");
 }
 
 export function closedDiagramFence(raw: string): boolean {

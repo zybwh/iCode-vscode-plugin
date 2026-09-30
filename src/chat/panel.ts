@@ -138,6 +138,7 @@ export interface RuntimeDetailsSection {
 
 export type HostMessage =
   | { type: "appendMessage"; message: ChatMessage }
+  | { type: "appendMessages"; messages: ChatMessage[] }
   | { type: "updateMessage"; messageId: string; patch: Partial<ChatMessage> }
   | { type: "updateMessageTextOnly"; messageId: string; text: string }
   | { type: "removeMessage"; messageId: string }
@@ -480,7 +481,7 @@ export class ChatPanel {
         case "webviewReady":
           if (this.webviewReady) {
             this.clearMessages();
-            for (const message of rt.transcript.messages) this.appendMessage(message);
+            this.replayTranscript(rt.transcript.messages);
             this.setComposer(this.owner.composerDraft);
             if (this.lastState) this.setState(this.lastState);
             if (this.lastApproval) this.setApprovalDialogState(this.lastApproval);
@@ -503,7 +504,7 @@ export class ChatPanel {
       if (this.panel.active) focusRuntime(this.owner);
     });
     this.panel.webview.html = this._getHtml(context);
-    for (const message of rt.transcript.messages) this.appendMessage(message);
+    this.replayTranscript(rt.transcript.messages);
 
     if (this.owner.composerDraft) this.setComposer(this.owner.composerDraft);
     if (this.owner.pendingApproval) this.setApprovalDialogState(this.owner.pendingApproval);
@@ -629,6 +630,11 @@ export class ChatPanel {
 
   appendMessage(message: ChatMessage): void {
     this._post({ type: "appendMessage", message });
+  }
+
+  /** Sends a restored transcript as one message so the webview renders it in one pass. */
+  replayTranscript(messages: readonly ChatMessage[]): void {
+    if (messages.length) this._post({ type: "appendMessages", messages: [...messages] });
   }
 
   updateMessage(messageId: string, patch: Partial<ChatMessage>): void {

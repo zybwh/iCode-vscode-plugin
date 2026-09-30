@@ -4910,3 +4910,10 @@ textarea:disabled {
 .agent-clone-notice { border-left:2px solid var(--vscode-textLink-foreground,#c49ff5); padding:8px 10px; color:var(--vscode-descriptionForeground,#aaa); }
 .inline-session-row-clickable:focus-visible { outline:1px solid var(--vscode-focusBorder,#c49ff5); outline-offset:-1px; }
 .inline-session-row-clickable[hidden] { display:none; }
+
+/* Long transcripts: skip layout and paint for messages scrolled far out of view. */
+.message-area > .bubble,
+.message-area > .tool-group {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 120px;
+}

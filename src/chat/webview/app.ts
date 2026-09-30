@@ -17,6 +17,7 @@ import type {
   ChatInlineDialogState,
   ChatPanelState,
   ChatSessionsSidebarState,
+  HostMessage,
 } from "../panel";
 import { el, formatDurationMs, formatClock, tokenValueOrDash, formatJson, shortSessionId, formatCountLabel, imageDataUri } from "./helpers";
 import { isInsideUntrustedMarkup, renderMarkdown } from "./renderer";
@@ -1283,7 +1284,7 @@ inputField.addEventListener("compositionend", () => {
   state.isComposingText = false;
 });
 inputField.addEventListener("input", () => {
-  vscode.postMessage({ type: "composerDraft", text: inputField.value });
+  // updateComposerState() below posts the composer draft.
   state.promptHistoryIndex = state.promptHistory.length;
   state.promptHistoryDraft = "";
   autoResizeInput();
@@ -1420,6 +1421,17 @@ sidebarContent.addEventListener("keydown", (event) => {
 sidebarContent.addEventListener("click", (event) => {
   const target = event.target;
   if (!(target instanceof HTMLElement)) return;
+  // Jump to a message from the Messages tab (delegated; the list is rebuilt often).
+  const messageLink = target.closest<HTMLElement>(".sidebar-message-list [data-message-id]");
+  if (messageLink?.dataset.messageId) {
+    const jumpTarget = state.messageMap.get(messageLink.dataset.messageId);
+    if (jumpTarget) {
+      jumpTarget.scrollIntoView({ behavior: prefersReducedMotion() ? "auto" : "smooth", block: "center" });
+      jumpTarget.classList.add("flash-highlight");
+      setTimeout(() => jumpTarget.classList.remove("flash-highlight"), 1500);
+    }
+    return;
+  }
   const sessionsAction = target.closest<HTMLElement>("[data-sessions-action]");
   if (sessionsAction) {
     const action = sessionsAction.dataset.sessionsAction;
@@ -1579,7 +1591,7 @@ messageArea.addEventListener("contextmenu", (event) => {
 });
 messageArea.addEventListener("scroll", () => {
   state.messageScrollAnchored = isMessageAreaAtBottom(messageArea);
-});
+}, { passive: true });
 new MutationObserver(() => {
   scheduleMessageAnchorSync(state.messageScrollAnchored, messageArea);
 }).observe(messageArea, { childList: true, subtree: true, characterData: true });
@@ -1615,6 +1627,9 @@ window.addEventListener("message", (e) => {
   switch (msg.type) {
     case "appendMessage":
       appendMessage(msg.message);
+      break;
+    case "appendMessages":
+      appendMessages(msg.messages);
       break;
     case "updateMessage":
       updateMessage(msg.messageId, msg.patch);
@@ -1696,6 +1711,9 @@ window.addEventListener("message", (e) => {
 
 let userTurnCount = 0;
 
+/** True while a restored transcript is replayed; per-message side effects run once at the end. */
+let replayingTranscript = false;
+
 function appendMessage(msg: ChatMessage): void {
   hideWelcome();
   const shouldFollow = consumeForceFollowNextMessage() || shouldFollowMessages(messageArea);
@@ -1703,12 +1721,13 @@ function appendMessage(msg: ChatMessage): void {
     msg.turnNumber = ++userTurnCount;
   }
   state.messages.push(msg);
-  addMessageDebugEvent(msg, "start");
+  state.messageById.set(msg.id, msg);
+  if (!replayingTranscript) addMessageDebugEvent(msg, "start");
   if (isToolMessage(msg)) {
     appendToolMessage(msg, messageArea, statusBar);
     const toolElement = state.messageMap.get(msg.id);
     if (toolElement) markCopyableMessageElement(msg, toolElement);
-    renderSideTab(activeSideTab());
+    refreshSideTabAfterMessage(msg);
     scheduleMessageAnchorSync(shouldFollow, messageArea);
     return;
   }
@@ -1717,25 +1736,48 @@ function appendMessage(msg: ChatMessage): void {
   markCopyableMessageElement(msg, element);
   state.messageMap.set(msg.id, element);
   messageArea.appendChild(element);
-  renderSideTab(activeSideTab());
+  refreshSideTabAfterMessage(msg);
   scheduleMessageAnchorSync(shouldFollow, messageArea);
 }
 
+/** Replays a restored transcript without per-message sidebar renders or debug relays. */
+function appendMessages(messages: ChatMessage[]): void {
+  replayingTranscript = true;
+  try {
+    for (const message of messages) appendMessage(message);
+  } finally {
+    replayingTranscript = false;
+  }
+  renderSideTab(activeSideTab());
+}
+
+/**
+ * The Messages tab lists user turns only, so tool and agent traffic does not need to
+ * rebuild it; other tabs keep refreshing on every message change.
+ */
+function refreshSideTabAfterMessage(msg: ChatMessage): void {
+  if (replayingTranscript) return;
+  const tab = activeSideTab();
+  if (tab === "messages" && msg.kind !== "user") return;
+  renderSideTab(tab);
+}
+
 function updateMessage(msgId: string, patch: Partial<ChatMessage>): void {
-  const idx = state.messages.findIndex((m) => m.id === msgId);
-  if (idx === -1) return;
-  const shouldFollow = shouldFollowMessages(messageArea);
-  Object.assign(state.messages[idx], patch);
-  addMessageDebugEvent(state.messages[idx], "update");
+  const message = state.messageById.get(msgId);
+  if (!message) return;
+  // The scroll listener keeps the anchor current; avoid a forced layout read per update.
+  const shouldFollow = state.messageScrollAnchored;
+  Object.assign(message, patch);
+  addMessageDebugEvent(message, "update");
   const existing = state.messageMap.get(msgId);
   if (!existing) return;
-  const newEl = renderMessage(state.messages[idx]);
-  markCopyableMessageElement(state.messages[idx], newEl);
+  const newEl = renderMessage(message);
+  markCopyableMessageElement(message, newEl);
   existing.replaceWith(newEl);
   state.messageMap.set(msgId, newEl);
   const toolGroup = state.toolGroupByMessageId.get(msgId);
   if (toolGroup) updateToolGroup(toolGroup, statusBar);
-  renderSideTab(activeSideTab());
+  refreshSideTabAfterMessage(message);
   scheduleMessageAnchorSync(shouldFollow, messageArea);
 }
 
@@ -1745,15 +1787,15 @@ function markCopyableMessageElement(msg: ChatMessage, element: HTMLElement): voi
 }
 
 function updateMessageTextOnly(msgId: string, text: string): void {
-  const idx = state.messages.findIndex((m) => m.id === msgId);
-  if (idx === -1) return;
-  const shouldFollow = shouldFollowMessages(messageArea);
-  state.messages[idx].text = text;
+  const message = state.messageById.get(msgId);
+  if (!message || message.text === text) return;
+  const shouldFollow = state.messageScrollAnchored;
+  message.text = text;
   const existing = state.messageMap.get(msgId);
   if (!existing) return;
   const bubbleContent = existing.querySelector<HTMLElement>(".bubble-content");
   if (!bubbleContent) return;
-  renderMessageTextUpdate(state.messages[idx], bubbleContent);
+  renderMessageTextUpdate(message, bubbleContent);
   scheduleMessageAnchorSync(shouldFollow, messageArea);
 }
 
@@ -1776,6 +1818,7 @@ function renderMessageTextUpdate(message: ChatMessage, bubbleContent: HTMLElemen
 function removeMessage(msgId: string): void {
   const idx = state.messages.findIndex((message) => message.id === msgId);
   if (idx >= 0) state.messages.splice(idx, 1);
+  state.messageById.delete(msgId);
   const existing = state.messageMap.get(msgId);
   if (existing) {
     const group = state.toolGroupByMessageId.get(msgId);
@@ -1792,6 +1835,7 @@ function removeMessage(msgId: string): void {
 
 function clearMessages(): void {
   state.messages.length = 0;
+  state.messageById.clear();
   state.messageMap.clear();
   state.toolGroupByMessageId.clear();
   state.activeToolGroup = null;
@@ -2174,19 +2218,6 @@ function renderSideTab(tab: string): void {
         return renderSidebarMessage(message, visibleTurnNumber);
       }),
     ));
-    // Click to jump to message
-    sidebarContent.querySelectorAll<HTMLElement>("[data-message-id]").forEach((el) => {
-      el.addEventListener("click", () => {
-        const msgId = el.dataset.messageId;
-        if (!msgId) return;
-        const target = state.messageMap.get(msgId);
-        if (target) {
-          target.scrollIntoView({ behavior: prefersReducedMotion() ? "auto" : "smooth", block: "center" });
-          target.classList.add("flash-highlight");
-          setTimeout(() => target.classList.remove("flash-highlight"), 1500);
-        }
-      });
-    });
     return;
   }
   if (tab === "sessions") {
@@ -2547,7 +2578,7 @@ function addDebugEvent(kind: string, detail: string, relayToHost = true): void {
   if (state.debugEvents.length > 200) {
     state.debugEvents.splice(0, state.debugEvents.length - 200);
   }
-  persistWebviewDiagnosticsState();
+  scheduleDiagnosticsPersist();
   if (relayToHost) {
     vscode.postMessage({ type: "frontendDebugEvent", kind, detail });
   }
@@ -2556,7 +2587,22 @@ function addDebugEvent(kind: string, detail: string, relayToHost = true): void {
   }
 }
 
+let diagnosticsPersistTimer: number | undefined;
+
+/** Debug events arrive in bursts; persist them at most every 500 ms. */
+function scheduleDiagnosticsPersist(): void {
+  if (diagnosticsPersistTimer !== undefined) return;
+  diagnosticsPersistTimer = window.setTimeout(() => {
+    diagnosticsPersistTimer = undefined;
+    persistWebviewDiagnosticsState();
+  }, 500);
+}
+
 function persistWebviewDiagnosticsState(selectedTab = activeSideTab()): void {
+  if (diagnosticsPersistTimer !== undefined) {
+    window.clearTimeout(diagnosticsPersistTimer);
+    diagnosticsPersistTimer = undefined;
+  }
   vscode.setState({
     attachments: pendingAttachments,
     promptHistory: state.promptHistory.slice(-100),
@@ -4047,9 +4093,17 @@ function clearComposer(): void {
   autoResizeInput();
 }
 
+/** Attachments are persisted only when they change, not on every keystroke. */
+let persistedAttachmentsRef: unknown = null;
+let persistedAttachmentsLength = -1;
+
 function updateComposerState(): void {
-  const saved = (vscode.getState() ?? {}) as Record<string,unknown>;
-  vscode.setState({...saved,attachments:pendingAttachments});
+  if (pendingAttachments !== persistedAttachmentsRef || pendingAttachments.length !== persistedAttachmentsLength) {
+    persistedAttachmentsRef = pendingAttachments;
+    persistedAttachmentsLength = pendingAttachments.length;
+    const saved = (vscode.getState() ?? {}) as Record<string,unknown>;
+    vscode.setState({...saved,attachments:pendingAttachments});
+  }
   vscode.postMessage({ type: "composerDraft", text: inputField.value });
   inputBar.classList.toggle("has-text", inputField.value.length > 0 || pendingImages.length > 0 || pendingAttachments.length > 0 || preparingImageCount > 0);
   updateSendButtonState();
@@ -4080,31 +4134,6 @@ function runningSendButtonLabel(hasText: boolean): string {
 // Webview → host message types
 // ──────────────────────────────────────────────
 
-type HostMessage =
-  | { type: "appendMessage"; message: ChatMessage }
-  | { type: "updateMessage"; messageId: string; patch: Partial<ChatMessage> }
-  | { type: "updateMessageTextOnly"; messageId: string; text: string }
-  | { type: "removeMessage"; messageId: string }
-  | { type: "clearMessages" }
-  | { type: "setState"; state: ChatPanelState }
-  | { type: "setComposer"; text: string }
-  | { type: "addTextAttachment"; attachment: TextAttachment }
-  | { type: "reconnectNotice" }
-  | { type: "debugEvent"; kind: string; detail: string }
-  | { type: "localCommand"; command: "notifications" }
-  | { type: "modelDialogState"; state: ChatModelDialogState }
-  | { type: "modelDialogBusy"; busy: boolean }
-  | { type: "modelDialogNotice"; level: "info" | "warning" | "error"; text: string }
-  | { type: "agentDialogState"; state: ChatAgentDialogState }
-  | { type: "agentDialogBusy"; busy: boolean }
-  | { type: "agentDialogNotice"; level: "info" | "warning" | "error"; text: string }
-  | { type: "applyTheme"; theme: string }
-  | { type: "inlineDialogState"; state: ChatInlineDialogState }
-  | { type: "inlineDialogBusy"; busy: boolean }
-  | { type: "inlineDialogNotice"; level: "info" | "warning" | "error"; text: string }
-  | { type: "approvalDialogState"; state: ChatApprovalDialogState | null }
-  | { type: "askUserDialogState"; state: ChatAskUserDialogState | null }
-  | { type: "sessionsSidebarState"; state: ChatSessionsSidebarState };
 
 // ──────────────────────────────────────────────
 // Theme presets (CSS variable overrides)
