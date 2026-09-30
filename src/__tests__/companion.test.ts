@@ -8,6 +8,7 @@ import { summonWindow, canSummon } from "../companion/summon";
 import { applyCompanionGrowthEvent, defaultCompanionGrowth, experienceForLevel, levelFromExperience } from "../companion/growth";
 import {
   awardCompanionExperience,
+  flushCompanionWrites,
   addressCompanion,
   loadCompanionViewState,
   petCompanion,
@@ -494,5 +495,25 @@ describe("companion store", () => {
     expect(state.pool.map((card) => card.name)).toContain("Workspace 白泽");
     expect(state.pool.map((card) => card.id)).not.toContain("invalid-no-name");
     fs.rmSync(workspace, { recursive: true, force: true });
+  });
+});
+
+describe("companion store caching", () => {
+  it("batches usage XP writes and flushes them on demand", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "companion-cache-"));
+    try {
+      const options = { companionRootDir: root, workspaceDir: undefined };
+      summonCompanion(options, new Date(2026, 5, 24, 10, 0, 0));
+      const onDisk = () => JSON.parse(fs.readFileSync(path.join(root, "collection.json"), "utf8")).cards[0].growth.experience as number;
+      const before = onDisk();
+      const awarded = awardCompanionExperience(options, { kind: "tool_completed", experience: 8 });
+      expect(awarded.activeCard?.growth.experience).toBe(before + 8);
+      expect(loadCompanionViewState(options).activeCard?.growth.experience).toBe(before + 8);
+      expect(onDisk()).toBe(before);
+      flushCompanionWrites();
+      expect(onDisk()).toBe(before + 8);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
   });
 });

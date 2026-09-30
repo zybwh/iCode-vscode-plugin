@@ -21,6 +21,11 @@ export interface ToolSnapshot {
   status?: string;
   rawInput?: unknown;
   rawOutput?: unknown;
+  /** Streamed output characters beyond the in-memory cap. */
+  rawOutputDroppedChars?: number;
+  /** Last formatted output sent to the chat, to skip unchanged updates. */
+  lastToolOutput?: string;
+  canDiff?: boolean;
   content?: ToolCallContent[];
   metadata?: Record<string, unknown>;
 }
@@ -115,6 +120,7 @@ export class ExtensionRuntime {
   activeAskUserRequest: ActiveAskUserRequest | null = null;
   sessionsDialogRefreshPending = false;
   logsRefreshTimer: ReturnType<typeof setInterval> | null = null;
+  logsDialogSignature = "";
 
   closeInlineDialog(): void {
     this.activeInlineDialogKind = null;

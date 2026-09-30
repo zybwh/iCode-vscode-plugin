@@ -15,6 +15,8 @@ import type { ChatConnectionState } from "./webview/connectionPresentation";
 
 /** Changes once per extension-host start so rebuilt bundles are not served from cache. */
 const WEBVIEW_ASSET_VERSION = Date.now().toString(36);
+/** Upper bound on how long a streamed text update waits before reaching the webview. */
+export const STREAM_FLUSH_MS = 40;
 
 export interface ChatModelDialogState {
   models: ModelSummary[];
@@ -337,6 +339,9 @@ export class ChatPanel {
   private lastAskUser: ChatAskUserDialogState | null = null;
   private companionAssetBaseUri: string;
   private readonly readyMessages: ReadyMessageQueue<HostMessage>;
+  /** Latest streamed text per message, flushed at most every STREAM_FLUSH_MS. */
+  private readonly pendingText = new Map<string, string>();
+  private textFlushTimer: ReturnType<typeof setTimeout> | null = null;
   private _sendHandler: SendHandler | null = null;
   private _cancelHandler: CancelHandler | null = null;
   private _commandHandler: CommandHandler | null = null;
@@ -506,6 +511,9 @@ export class ChatPanel {
     this.panel.onDidDispose(bindRuntime(() => {
       // Detach before cancelling dialogs: their cleanup can post to this panel.
       this.disposed = true;
+      if (this.textFlushTimer) clearTimeout(this.textFlushTimer);
+      this.textFlushTimer = null;
+      this.pendingText.clear();
       if (rt.chatPanel === this) {
         rt.chatPanel = null;
         rt.closeInlineDialog();
@@ -627,15 +635,42 @@ export class ChatPanel {
     this._post({ type: "updateMessage", messageId, patch });
   }
 
+  /**
+   * Streaming chunks each carry the full accumulated text. Coalesce them so the webview
+   * re-renders a growing message a bounded number of times per second instead of once
+   * per token. Any other message flushes pending text first to preserve ordering.
+   */
   updateMessageTextOnly(messageId: string, text: string): void {
-    this._post({ type: "updateMessageTextOnly", messageId, text });
+    if (this.disposed) return;
+    this.pendingText.set(messageId, text);
+    this.textFlushTimer ??= setTimeout(() => {
+      this.textFlushTimer = null;
+      this._flushPendingText();
+    }, STREAM_FLUSH_MS);
+  }
+
+  private _flushPendingText(): void {
+    if (this.textFlushTimer) {
+      clearTimeout(this.textFlushTimer);
+      this.textFlushTimer = null;
+    }
+    if (!this.pendingText.size || this.disposed) {
+      this.pendingText.clear();
+      return;
+    }
+    const updates = [...this.pendingText];
+    this.pendingText.clear();
+    for (const [messageId, text] of updates) this.readyMessages.send({ type: "updateMessageTextOnly", messageId, text });
   }
 
   removeMessage(messageId: string): void {
+    this.pendingText.delete(messageId);
     this._post({ type: "removeMessage", messageId });
   }
 
   clearMessages(): void {
+    // Cleared or rehydrated transcripts are re-sent in full; queued text is obsolete.
+    this.pendingText.clear();
     this._post({ type: "clearMessages" });
   }
 
@@ -759,7 +794,7 @@ export class ChatPanel {
       : state?.sessionState === "running" ? panelText("Running", "运行中")
       : state?.sessionState === "cancelling" ? panelText("Stopping", "停止中")
       : this.owner.activeTurnErrorReceived ? panelText("Failed", "失败")
-      : this.owner.transcript.messages.length ? panelText("Done", "已完成") : "";
+      : this.owner.transcript.size ? panelText("Done", "已完成") : "";
     this.panel.title = `${status ? `[${status}] ` : ""}${label} — iCode`;
   }
 
@@ -788,6 +823,7 @@ export class ChatPanel {
 
   private _post(msg: HostMessage): void {
     if (this.disposed) return;
+    this._flushPendingText();
     this.readyMessages.send(msg);
   }
 

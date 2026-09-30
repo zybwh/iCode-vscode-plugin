@@ -8,7 +8,6 @@ import { chatPanelState } from "../common/chatPanelState";
 import { applyPreferredDefaultsToNewSession } from "../session/defaults";
 import { awardCompanionActiveMinutes, awardCompanionUsageEvent, handleCompanionCommand, handleCompanionDirectAddress } from "./companion";
 import { resolveUiLanguage } from "../common/i18n";
-import { refreshRuntimeSnapshot } from "../handlers/notifications";
 import {
   openSessionsDialog,
   openAgentsDialog,
@@ -215,7 +214,6 @@ export async function ensureActiveSessionForPrompt(text: string): Promise<boolea
     if (rt.sessionManager !== sessionManager) return false;
     rt.currentSessionId = sessionId;
     await applyPreferredDefaultsToNewSession();
-    await refreshRuntimeSnapshot();
     rt.persistCurrentSession();
     rt.chatPanel?.setState(chatPanelState());
     rt.chatPanel?.appendDebugEvent("SessionNewSucceeded", rt.currentSessionId);

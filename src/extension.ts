@@ -8,6 +8,7 @@ import * as path from "node:path";
 import * as os from "node:os";
 import * as fs from "node:fs";
 import { managedRuntime, pruneStaleRuntimes } from "./runtime/install";
+import { flushCompanionWrites } from "./companion/store";
 import { resolveRuntime } from "./runtime/resolve";
 import { ProcessManager } from "./process/manager";
 import { SessionManager } from "./session/manager";
@@ -644,7 +645,6 @@ export async function openSessionTab(session?: Pick<SessionInfo, "sessionId" | "
       owner.currentSessionId = await owner.sessionManager.newSession(cwd, owner.additionalDirectories);
       recordLifecycleEvent("SessionNewSucceeded", owner.currentSessionId);
       await applyPreferredDefaultsToNewSession();
-      await refreshRuntimeSnapshot();
       owner.persistCurrentSession();
       owner.sessionTreeProvider?.refresh();
       owner.chatPanel?.setState(chatPanelState());
@@ -1263,6 +1263,7 @@ function relativeSessionTime(iso: string): string {
 // ──────────────────────────────────────────────
 
 export async function deactivate(): Promise<void> {
+  flushCompanionWrites();
   await Promise.all([...sessionRuntimes].map(owner => withRuntime(owner, async () => {
     owner.shuttingDown = true;
     owner.clearRestartTimer();

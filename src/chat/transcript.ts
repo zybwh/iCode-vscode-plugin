@@ -14,6 +14,10 @@ export class ChatTranscript {
     return [...this.entries.values()];
   }
 
+  get size(): number {
+    return this.entries.size;
+  }
+
   appendMessage(message: ChatMessage): void {
     this.entries.set(message.id, { ...message });
     this.view()?.appendMessage(message);

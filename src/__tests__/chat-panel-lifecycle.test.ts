@@ -61,7 +61,7 @@ vi.mock("vscode", () => ({
   },
 }));
 
-import { ChatPanel } from "../chat/panel";
+import { ChatPanel, STREAM_FLUSH_MS } from "../chat/panel";
 import { AskUserHandler } from "../askUser/modal";
 import { ApprovalHandler } from "../approval/modal";
 import { rt, currentRuntime, createSessionRuntime, focusRuntime, withRuntime, sessionRuntimes } from "../state/runtime";
@@ -270,6 +270,25 @@ describe("chat panel lifecycle", () => {
       { type: "appendMessage", message: expect.objectContaining({ text: "before after" }) },
     ]);
     expect(sent).toContainEqual({ type: "setState", state: expect.objectContaining({ sessionState: "running" }) });
+  });
+
+  it("coalesces streamed text and flushes it before later messages", () => {
+    vi.useFakeTimers();
+    const host = openChat();
+    handleAgentChunk({ sessionUpdate: "agent_message_chunk", content: { type: "text", text: "a" } });
+    host.postMessage.mockClear();
+    for (const chunk of ["b", "c", "d"]) handleAgentChunk({ sessionUpdate: "agent_message_chunk", content: { type: "text", text: chunk } });
+    const textUpdates = () => host.postMessage.mock.calls.map(([message]) => message).filter(message => message.type === "updateMessageTextOnly");
+    expect(textUpdates()).toEqual([]);
+    vi.advanceTimersByTime(STREAM_FLUSH_MS);
+    expect(textUpdates()).toEqual([expect.objectContaining({ text: "abcd" })]);
+
+    host.postMessage.mockClear();
+    handleAgentChunk({ sessionUpdate: "agent_message_chunk", content: { type: "text", text: "e" } });
+    rt.transcript.appendMessage({ id: "after", kind: "system", text: "next", timestamp: 0 });
+    const sent = host.postMessage.mock.calls.map(([message]) => message);
+    expect(sent.map(message => message.type)).toEqual(["updateMessageTextOnly", "appendMessage"]);
+    expect(sent[0]).toEqual(expect.objectContaining({ text: "abcde" }));
   });
 
   it("keeps pending approval and AskUser requests answerable after webview reload", async () => {

@@ -482,12 +482,13 @@ export async function openRuntimeDialog(activeTabId?: string): Promise<void> {
 
 export function openLogsDialog(): void {
   if (!rt.chatPanel) return;
+  rt.logsDialogSignature = "";
   pushLogDialogState();
   startLogsRefresh();
 }
 
-const LOG_MODULES: Array<{ id: string; label: string; pattern: RegExp }> = [
-  { id: "events", label: nativeText("Events", "事件"), pattern: /\[event:/i },
+const LOG_MODULES: Array<{ id: string; label: string | (() => string); pattern: RegExp }> = [
+  { id: "events", label: () => nativeText("Events", "事件"), pattern: /\[event:/i },
   { id: "chrys", label: "chrys", pattern: /\[chrys\]/i },
   { id: "agent-framework", label: "agent-framework", pattern: /\[agent_framework\]/i },
   { id: "openai", label: "openai", pattern: /\[openai\]/i },
@@ -521,7 +522,7 @@ function parseLogModules(lines: string[]): Array<{ id: string; label: string; te
   for (const mod of LOG_MODULES) {
     const modLines = modules.get(mod.id);
     if (modLines && modLines.length) {
-      tabs.push({ id: mod.id, label: mod.label, text: modLines.join("\n") });
+      tabs.push({ id: mod.id, label: typeof mod.label === "function" ? mod.label() : mod.label, text: modLines.join("\n") });
     }
   }
   const otherLines = modules.get("other");
@@ -533,6 +534,10 @@ function parseLogModules(lines: string[]): Array<{ id: string; label: string; te
 
 function pushLogDialogState(): void {
   const lines = rt.logLines.slice(-250);
+  // The refresh timer fires every 2s; skip re-sending ~250 lines twice when nothing changed.
+  const signature = `${rt.logLines.length}\0${lines.at(-1) ?? ""}\0${lines[0] ?? ""}`;
+  if (signature === rt.logsDialogSignature) return;
+  rt.logsDialogSignature = signature;
   const tabs = parseLogModules(lines);
   setTrackedInlineDialogState({
     kind: "logs",

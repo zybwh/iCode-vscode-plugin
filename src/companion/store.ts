@@ -44,7 +44,44 @@ function readJsonFile(filePath: string): unknown {
   }
 }
 
+/**
+ * The companion view state is rebuilt for every chat state push, and usage XP is awarded
+ * on every tool call. Reading and appraising the collection and packs from disk each time
+ * blocked the extension host, so both are cached briefly and XP writes are batched.
+ * The short TTL still picks up edits made by another window or by hand.
+ */
+const COLLECTION_CACHE_TTL_MS = 2000;
+const POOL_CACHE_TTL_MS = 10_000;
+/** Usage XP is flushed at most this often; explicit companion actions write immediately. */
+export const COMPANION_WRITE_DEBOUNCE_MS = 5000;
+
+interface CachedCollection {
+  collection: CompanionCollectionFile;
+  readAt: number;
+  options: CompanionLoadOptions;
+  dirty: boolean;
+}
+
+const collectionCache = new Map<string, CachedCollection>();
+const poolCache = new Map<string, { pool: CompanionPoolCard[]; readAt: number }>();
+let flushTimer: ReturnType<typeof setTimeout> | null = null;
+
+function cloneCollection(collection: CompanionCollectionFile): CompanionCollectionFile {
+  return structuredClone(collection);
+}
+
 function readCollection(options: CompanionLoadOptions): CompanionCollectionFile {
+  const key = collectionPath(options);
+  const cached = collectionCache.get(key);
+  if (cached && (cached.dirty || Date.now() - cached.readAt < COLLECTION_CACHE_TTL_MS)) {
+    return cloneCollection(cached.collection);
+  }
+  const collection = readCollectionFromDisk(options);
+  collectionCache.set(key, { collection: cloneCollection(collection), readAt: Date.now(), options, dirty: false });
+  return collection;
+}
+
+function readCollectionFromDisk(options: CompanionLoadOptions): CompanionCollectionFile {
   const data = readJsonFile(collectionPath(options)) as Partial<CompanionCollectionFile> | undefined;
   return {
     schemaVersion: COLLECTION_SCHEMA_VERSION,
@@ -56,10 +93,43 @@ function readCollection(options: CompanionLoadOptions): CompanionCollectionFile 
   };
 }
 
-function writeCollection(options: CompanionLoadOptions, collection: CompanionCollectionFile): void {
+function writeCollectionToDisk(options: CompanionLoadOptions, collection: CompanionCollectionFile): void {
   const target = collectionPath(options);
   fs.mkdirSync(path.dirname(target), { recursive: true });
   fs.writeFileSync(target, `${JSON.stringify(collection, null, 2)}\n`, "utf8");
+}
+
+function writeCollection(options: CompanionLoadOptions, collection: CompanionCollectionFile, deferred = false): void {
+  const key = collectionPath(options);
+  const entry: CachedCollection = { collection: cloneCollection(collection), readAt: Date.now(), options, dirty: deferred };
+  collectionCache.set(key, entry);
+  if (!deferred) {
+    writeCollectionToDisk(options, collection);
+    return;
+  }
+  flushTimer ??= setTimeout(() => {
+    flushTimer = null;
+    flushCompanionWrites();
+  }, COMPANION_WRITE_DEBOUNCE_MS);
+  flushTimer.unref?.();
+}
+
+/** Persist batched usage XP. Call on shutdown so no progress is lost. */
+export function flushCompanionWrites(): void {
+  if (flushTimer) {
+    clearTimeout(flushTimer);
+    flushTimer = null;
+  }
+  for (const entry of collectionCache.values()) {
+    if (!entry.dirty) continue;
+    entry.dirty = false;
+    entry.readAt = Date.now();
+    try {
+      writeCollectionToDisk(entry.options, entry.collection);
+    } catch {
+      // Companion progress is best-effort local state.
+    }
+  }
 }
 
 function normalizeCollectionItem(value: unknown): CompanionCollectionItem | null {
@@ -133,11 +203,16 @@ function loadPacks(options: CompanionLoadOptions): CompanionPack[] {
 }
 
 function companionPool(options: CompanionLoadOptions): CompanionPoolCard[] {
-  return loadPacks(options).flatMap((pack) => pack.cards.map((card) => ({
+  const key = `${companionRootDir(options)}\0${options.workspaceDir ?? ""}`;
+  const cached = poolCache.get(key);
+  if (cached && Date.now() - cached.readAt < POOL_CACHE_TTL_MS) return cached.pool;
+  const pool = loadPacks(options).flatMap((pack) => pack.cards.map((card) => ({
     ...card,
     packId: pack.id,
     appraisal: appraiseCompanion(card, { packId: pack.id }),
   })));
+  poolCache.set(key, { pool, readAt: Date.now() });
+  return pool;
 }
 
 function activeCard(collection: CompanionCollectionFile): CompanionCollectionItem | null {
@@ -280,6 +355,6 @@ export function awardCompanionExperience(
     return loadCompanionViewState(options, now);
   }
   active.growth = applyCompanionGrowthEvent(active.growth, event, now);
-  writeCollection(options, collection);
+  writeCollection(options, collection, true);
   return loadCompanionViewState(options, now);
 }
