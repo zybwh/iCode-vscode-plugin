@@ -1,11 +1,11 @@
 import * as vscode from "vscode";
 import * as path from "node:path";
-import { resolveUiLanguage } from "../common/i18n";
+import { hostUiLanguage } from "../common/hostI18n";
 
 type WorkspaceItem = vscode.QuickPickItem & { directory?: string };
 
 export async function pickWorkspaceDirectory(currentCwd?: string): Promise<string | undefined> {
-  const language = resolveUiLanguage(vscode.workspace.getConfiguration("chrys").get<string>("ui.language"), vscode.env.language);
+  const language = hostUiLanguage();
   const text = (en: string, zh: string): string => language === "zh-CN" ? zh : en;
   const folders = vscode.workspace.workspaceFolders ?? [];
   if (folders.length) {
@@ -38,7 +38,7 @@ export async function pickWorkspaceDirectory(currentCwd?: string): Promise<strin
 
 /** Explicit scope selection; never implicitly grant all editor roots. */
 export async function pickAdditionalDirectories(primary: string, current: string[]): Promise<string[] | undefined> {
-  const zh=resolveUiLanguage(vscode.workspace.getConfiguration("chrys").get<string>("ui.language"),vscode.env.language)==="zh-CN";
+  const zh=hostUiLanguage()==="zh-CN";
   const t=(en:string,cn:string)=>zh?cn:en;
   const candidates=new Set([...current,...(vscode.workspace.workspaceFolders??[]).map(f=>f.uri.fsPath)]);
   for(;;){

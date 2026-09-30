@@ -1,7 +1,8 @@
 import * as fs from "node:fs";
-import * as os from "node:os";
 import * as path from "node:path";
 import { randomInt } from "node:crypto";
+
+import { chrysConfigDir } from "../common/sessionFiles";
 
 import { appraiseCompanion, isValidCompanionCard } from "./appraisal";
 import { applyCompanionGrowthEvent, defaultCompanionGrowth, normalizeCompanionGrowth } from "./growth";
@@ -21,12 +22,6 @@ import type {
 
 const COLLECTION_SCHEMA_VERSION = 1;
 
-function chrysConfigDir(): string {
-  if (process.platform === "win32") {
-    return path.join(process.env.APPDATA || os.homedir(), "chrys");
-  }
-  return path.join(os.homedir(), ".chrys");
-}
 
 function companionRootDir(options: CompanionLoadOptions): string {
   return options.companionRootDir || process.env.CHRYS_COMPANION_ROOT_DIR || path.join(chrysConfigDir(), "companions");
@@ -44,7 +39,51 @@ function readJsonFile(filePath: string): unknown {
   }
 }
 
-function readCollection(options: CompanionLoadOptions): CompanionCollectionFile {
+/**
+ * The companion view state is rebuilt for every chat state push, and usage XP is awarded
+ * on every tool call. Reading and appraising the collection and packs from disk each time
+ * blocked the extension host, so disk reads are cached briefly and XP is batched.
+ * Batched XP is kept as events and replayed onto a fresh read of the file when it is
+ * written, so edits made meanwhile by another window or by hand are not overwritten.
+ */
+const COLLECTION_CACHE_TTL_MS = 2000;
+const POOL_CACHE_TTL_MS = 10_000;
+/** Usage XP is flushed at most this often; explicit companion actions write immediately. */
+export const COMPANION_WRITE_DEBOUNCE_MS = 5000;
+
+interface PendingGrowth {
+  fingerprint: string;
+  event: CompanionGrowthEvent;
+  at: Date;
+}
+
+const diskCache = new Map<string, { collection: CompanionCollectionFile; readAt: number }>();
+const pendingGrowth = new Map<string, { options: CompanionLoadOptions; events: PendingGrowth[] }>();
+const poolCache = new Map<string, { pool: CompanionPoolCard[]; readAt: number }>();
+let flushTimer: ReturnType<typeof setTimeout> | null = null;
+
+function applyPendingGrowth(collection: CompanionCollectionFile, events: PendingGrowth[]): CompanionCollectionFile {
+  for (const pending of events) {
+    const card = collection.cards.find((item) => item.fingerprint === pending.fingerprint);
+    if (card) card.growth = applyCompanionGrowthEvent(card.growth, pending.event, pending.at);
+  }
+  return collection;
+}
+
+function readCollection(options: CompanionLoadOptions, fresh = false): CompanionCollectionFile {
+  const key = collectionPath(options);
+  const cached = diskCache.get(key);
+  let collection: CompanionCollectionFile;
+  if (!fresh && cached && Date.now() - cached.readAt < COLLECTION_CACHE_TTL_MS) {
+    collection = structuredClone(cached.collection);
+  } else {
+    collection = readCollectionFromDisk(options);
+    diskCache.set(key, { collection: structuredClone(collection), readAt: Date.now() });
+  }
+  return applyPendingGrowth(collection, pendingGrowth.get(key)?.events ?? []);
+}
+
+function readCollectionFromDisk(options: CompanionLoadOptions): CompanionCollectionFile {
   const data = readJsonFile(collectionPath(options)) as Partial<CompanionCollectionFile> | undefined;
   return {
     schemaVersion: COLLECTION_SCHEMA_VERSION,
@@ -56,10 +95,47 @@ function readCollection(options: CompanionLoadOptions): CompanionCollectionFile 
   };
 }
 
-function writeCollection(options: CompanionLoadOptions, collection: CompanionCollectionFile): void {
+function writeCollectionToDisk(options: CompanionLoadOptions, collection: CompanionCollectionFile): void {
   const target = collectionPath(options);
   fs.mkdirSync(path.dirname(target), { recursive: true });
   fs.writeFileSync(target, `${JSON.stringify(collection, null, 2)}\n`, "utf8");
+  diskCache.set(target, { collection: structuredClone(collection), readAt: Date.now() });
+}
+
+/** Explicit actions write immediately; the collection they saved already includes pending XP. */
+function writeCollection(options: CompanionLoadOptions, collection: CompanionCollectionFile): void {
+  writeCollectionToDisk(options, collection);
+  pendingGrowth.delete(collectionPath(options));
+}
+
+function queueGrowth(options: CompanionLoadOptions, pending: PendingGrowth): void {
+  const key = collectionPath(options);
+  const entry = pendingGrowth.get(key) ?? { options, events: [] };
+  entry.events.push(pending);
+  pendingGrowth.set(key, entry);
+  flushTimer ??= setTimeout(() => {
+    flushTimer = null;
+    flushCompanionWrites();
+  }, COMPANION_WRITE_DEBOUNCE_MS);
+  flushTimer.unref?.();
+}
+
+/** Persist batched usage XP onto the current file contents. Call on shutdown so no progress is lost. */
+export function flushCompanionWrites(): void {
+  if (flushTimer) {
+    clearTimeout(flushTimer);
+    flushTimer = null;
+  }
+  for (const [key, entry] of [...pendingGrowth]) {
+    try {
+      // readCollection(fresh) re-reads the file and replays the queued events on top.
+      const collection = readCollection(entry.options, true);
+      writeCollectionToDisk(entry.options, collection);
+    } catch {
+      // Companion progress is best-effort local state.
+    }
+    pendingGrowth.delete(key);
+  }
 }
 
 function normalizeCollectionItem(value: unknown): CompanionCollectionItem | null {
@@ -133,11 +209,16 @@ function loadPacks(options: CompanionLoadOptions): CompanionPack[] {
 }
 
 function companionPool(options: CompanionLoadOptions): CompanionPoolCard[] {
-  return loadPacks(options).flatMap((pack) => pack.cards.map((card) => ({
+  const key = `${companionRootDir(options)}\0${options.workspaceDir ?? ""}`;
+  const cached = poolCache.get(key);
+  if (cached && Date.now() - cached.readAt < POOL_CACHE_TTL_MS) return cached.pool;
+  const pool = loadPacks(options).flatMap((pack) => pack.cards.map((card) => ({
     ...card,
     packId: pack.id,
     appraisal: appraiseCompanion(card, { packId: pack.id }),
   })));
+  poolCache.set(key, { pool, readAt: Date.now() });
+  return pool;
 }
 
 function activeCard(collection: CompanionCollectionFile): CompanionCollectionItem | null {
@@ -279,7 +360,6 @@ export function awardCompanionExperience(
   if (!active) {
     return loadCompanionViewState(options, now);
   }
-  active.growth = applyCompanionGrowthEvent(active.growth, event, now);
-  writeCollection(options, collection);
+  queueGrowth(options, { fingerprint: active.fingerprint, event, at: now });
   return loadCompanionViewState(options, now);
 }

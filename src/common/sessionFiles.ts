@@ -9,7 +9,8 @@ export function chrysConfigDir(): string {
   return path.join(os.homedir(), ".chrys");
 }
 
-function expandHomeDir(value: string): string {
+/** Expand a leading `~` (with either path separator) to the home directory. */
+export function expandHome(value: string): string {
   if (value === "~") return os.homedir();
   if (value.startsWith("~/") || value.startsWith("~\\")) {
     return path.join(os.homedir(), value.slice(2));
@@ -19,7 +20,7 @@ function expandHomeDir(value: string): string {
 
 export function chrysSessionRootDir(): string {
   const configured = process.env.CHRYS_SESSION_ROOT_DIR?.trim();
-  if (configured) return path.resolve(expandHomeDir(configured));
+  if (configured) return path.resolve(expandHome(configured));
   return chrysConfigDir();
 }
 

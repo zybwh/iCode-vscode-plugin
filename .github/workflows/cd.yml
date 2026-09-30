@@ -100,9 +100,7 @@ jobs:
           allow-prereleases: true
       - name: Install VSIX dependencies
         run: npm ci
-      - name: Build VSIX bundles
-        run: npm run build
-      - name: Package universal VSIX
+      - name: Build and package universal VSIX
         run: npm run package
       - uses: actions/upload-artifact@v7
         with:

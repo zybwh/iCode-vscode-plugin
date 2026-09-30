@@ -1,7 +1,7 @@
-import { rt } from "../state/runtime";
+import { rt, type ToolSnapshot } from "../state/runtime";
 import { nextMessageId, type ChatMessage } from "../chat/provider";
 import { objectValue, stringField, formatCount } from "../common/utils";
-import { logInfo, logError } from "../common/logging";
+import { logError } from "../common/logging";
 import { chatPanelState } from "../common/chatPanelState";
 import type {
   ContentBlock,
@@ -75,11 +75,18 @@ export function emitSessionDebugEvent(update: SessionUpdate): void {
     case "user_message_chunk":
       rt.chatPanel?.appendDebugEvent("UserMessage", `(${contentText(update.content).length} chars)`);
       break;
+    // Streams produce one event per message rather than per chunk: per-chunk events
+    // flooded the webview and the bounded log buffer used by Doctor and support bundles.
     case "agent_message_chunk":
-      rt.chatPanel?.appendDebugEvent("AgentMessage", `(${contentText(update.content).length} chars)`);
+      const newSourceMessage = Boolean(update.messageId && rt.activeAgentSourceMessageId && update.messageId !== rt.activeAgentSourceMessageId);
+      if (!rt.activeAgentMessageId || newSourceMessage || isIntermediateChunk(update)) {
+        rt.chatPanel?.appendDebugEvent("AgentMessage", `stream started (${contentText(update.content).length} chars)`);
+      }
       break;
     case "agent_thought_chunk":
-      rt.chatPanel?.appendDebugEvent("AgentThinking", `(${contentText(update.content).length} chars)`);
+      if (!rt.activeThoughtMessageId) {
+        rt.chatPanel?.appendDebugEvent("AgentThinking", `stream started (${contentText(update.content).length} chars)`);
+      }
       break;
     case "tool_call":
       rt.chatPanel?.appendDebugEvent("ToolCallStart", update.title ?? update.toolCallId);
@@ -133,7 +140,6 @@ export function handleUserChunk(update: UserMessageChunk): void {
 
 export function handleAgentChunk(update: AgentMessageChunk): void {
   const text = contentText(update.content);
-  logInfo(`Agent chunk textLength=${text.length}.`);
   if (!text) return;
 
   // Intermediate text arrives alongside tool calls and represents the
@@ -278,9 +284,10 @@ export function handleToolCallProgress(update: ToolCallProgress): void {
   if (update._meta !== undefined) snapshot.metadata = update._meta;
   if (update.rawOutput !== undefined) {
     if (typeof update.rawOutput === "string" && typeof snapshot.rawOutput === "string" && update.status !== "completed" && update.status !== "failed") {
-      snapshot.rawOutput = (snapshot.rawOutput as string) + update.rawOutput;
+      snapshot.rawOutput = appendStreamedToolOutput(snapshot, update.rawOutput);
     } else {
       snapshot.rawOutput = update.rawOutput;
+      snapshot.rawOutputDroppedChars = 0;
     }
   }
   rt.toolSnapshots.set(update.toolCallId, snapshot);
@@ -293,8 +300,15 @@ export function handleToolCallProgress(update: ToolCallProgress): void {
   if (update.rawInput !== undefined) patch.toolInput = update.rawInput;
   if (update.content !== undefined) patch.toolContent = toolContentBlocks(update.content, update.rawOutput);
   if (update._meta !== undefined) patch.toolMeta = update._meta;
-  if (update.rawOutput !== undefined) patch.toolOutput = formatToolOutput(snapshot.rawOutput);
-  patch.canDiff = diffFromSnapshot(snapshot) !== null;
+  if (update.rawOutput !== undefined) {
+    const toolOutput = formatToolOutput(snapshot.rawOutput, snapshot.rawOutputDroppedChars);
+    // Once output passes the display limit, further chunks do not change what is shown.
+    if (toolOutput !== snapshot.lastToolOutput) patch.toolOutput = snapshot.lastToolOutput = toolOutput;
+  }
+  if (update.rawInput !== undefined || update.title !== undefined || snapshot.canDiff === undefined) {
+    snapshot.canDiff = diffFromSnapshot(snapshot) !== null;
+    patch.canDiff = snapshot.canDiff;
+  }
 
   if (messageId) {
     rt.transcript.updateMessage(messageId, patch);
@@ -312,7 +326,7 @@ export function handleToolCallProgress(update: ToolCallProgress): void {
       toolInput: update.rawInput,
       toolContent: toolContentBlocks(snapshot.content, update.rawOutput),
       toolMeta: snapshot.metadata,
-      toolOutput: update.rawOutput === undefined ? undefined : formatToolOutput(snapshot.rawOutput),
+      toolOutput: update.rawOutput === undefined ? undefined : formatToolOutput(snapshot.rawOutput, snapshot.rawOutputDroppedChars),
       canDiff: diffFromSnapshot(snapshot) !== null,
       timestamp: Date.now(),
     });
@@ -362,10 +376,22 @@ export function handleSessionInfoUpdate(update: SessionInfoUpdate): void {
 // Helpers
 // ──────────────────────────────────────────────
 
-export function formatToolOutput(output: unknown): string {
+/** Streaming tool output kept in memory; the chat shows the first 5000 characters. */
+export const MAX_STREAMED_TOOL_OUTPUT_CHARS = 256 * 1024;
+
+function appendStreamedToolOutput(snapshot: ToolSnapshot, chunk: string): string {
+  const current = snapshot.rawOutput as string;
+  const room = MAX_STREAMED_TOOL_OUTPUT_CHARS - current.length;
+  if (room >= chunk.length) return current + chunk;
+  snapshot.rawOutputDroppedChars = (snapshot.rawOutputDroppedChars ?? 0) + chunk.length - Math.max(0, room);
+  return room > 0 ? current + chunk.slice(0, room) : current;
+}
+
+export function formatToolOutput(output: unknown, droppedChars = 0): string {
   if (typeof output === "string") {
-    if (output.length > 5000) {
-      return output.slice(0, 5000) + `\n... (truncated, ${output.length} total chars)`;
+    const total = output.length + droppedChars;
+    if (total > 5000) {
+      return output.slice(0, 5000) + `\n... (truncated, ${total} total chars)`;
     }
     return output;
   }

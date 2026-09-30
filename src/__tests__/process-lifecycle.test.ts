@@ -41,3 +41,25 @@ it.skipIf(process.platform !== "win32")("starts a Windows command wrapper with s
     await fs.rm(root, { recursive: true, force: true });
   }
 }, 15000);
+
+it("rejects start for a missing binary without reporting a disconnect", async () => {
+  const manager = new ProcessManager();
+  const disconnected: unknown[] = [];
+  manager.on("disconnected", (reason) => disconnected.push(reason));
+  await expect(manager.start("/nonexistent/icode-binary-for-test", ["acp"])).rejects.toThrow(/ENOENT/);
+  expect(manager.state).toBe("stopped");
+  expect(disconnected).toEqual([]);
+});
+
+it("reports a crash once and can start again afterwards", async () => {
+  const manager = new ProcessManager();
+  const disconnected: unknown[] = [];
+  manager.on("disconnected", (reason) => disconnected.push(reason));
+  await manager.start(process.execPath, ["-e", "process.exit(3)"]);
+  await new Promise<void>((resolve) => manager.on("disconnected", () => resolve()));
+  expect(disconnected).toEqual(["exit code 3"]);
+  expect(manager.state).toBe("stopped");
+  await manager.start(process.execPath, ["-e", "process.stdin.resume()"]);
+  expect(manager.state).toBe("running");
+  await manager.stop();
+});

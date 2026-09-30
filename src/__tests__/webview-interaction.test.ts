@@ -77,6 +77,19 @@ describe("chat webview interactions", () => {
     expect(document.body.textContent).not.toContain("iCode v0.0.9");
   });
 
+  it("replays a batched transcript and keeps streaming into it", () => {
+    update();
+    host({ type: "appendMessages", messages: [
+      { id: "u1", kind: "user", text: "first question", timestamp: 1 },
+      { id: "a1", kind: "agent", text: "answer", timestamp: 2 },
+      { id: "u2", kind: "user", text: "second question", timestamp: 3 },
+    ] });
+    expect(document.querySelectorAll("[data-copy-message-id]")).toHaveLength(3);
+    expect(document.querySelectorAll(".sidebar-message-list [data-message-id]")).toHaveLength(2);
+    host({ type: "updateMessageTextOnly", messageId: "a1", text: "answer, continued" });
+    expect(document.querySelector('[data-copy-message-id="a1"]')?.textContent).toContain("answer, continued");
+  });
+
   it("renders a restored transcript and continues updating its existing message", () => {
     let visible = true;
     const view = {

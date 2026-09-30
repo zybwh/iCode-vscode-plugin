@@ -2,12 +2,7 @@ import type { ChatMessage } from "../provider";
 import type { ProfileSummary } from "../../acp/types";
 import type { UiLanguage } from "../../common/i18n";
 import type { UiTheme } from "../../common/uiTheme";
-import type {
-  ChatApprovalDialogState,
-  ChatInlineDialogState,
-  ChatModelDialogState,
-  ChatPanelState,
-} from "../panel";
+import type { ChatInlineDialogState, ChatModelDialogState, ChatPanelState } from "../panel";
 
 // ──────────────────────────────────────────────
 // State interfaces
@@ -35,6 +30,8 @@ export interface DebugEvent {
 
 export const state = {
   messages: [] as ChatMessage[],
+  /** O(1) lookup for streamed/tool updates; mirrors `messages`. */
+  messageById: new Map<string, ChatMessage>(),
   messageMap: new Map<string, HTMLElement>(),
   usageHistory: [0] as number[],
   statusRunStartedAt: undefined as number | undefined,
@@ -70,6 +67,11 @@ export const state = {
 // ──────────────────────────────────────────────
 // State mutation helpers
 // ──────────────────────────────────────────────
+
+/** Pick the English or Simplified Chinese variant for the webview's current language. */
+export function uiText(en: string, zh: string): string {
+  return state.uiLanguage === "zh-CN" ? zh : en;
+}
 
 export function recordPromptHistory(text: string): void {
   const value = text.trim();

@@ -3,15 +3,12 @@ import { PROVIDERS } from "../../../common/providers";
 import { buildAgentProfileSave, cloneAgentProfile } from "../../agentProfileEdit";
 import { agentConfigurationFields, applyAgentConfiguration } from "./agentConfiguration";
 import { askUserAnswerFromDraft, createAskUserDraft, toggleAskUserDraftOption, updateAskUserDraftText } from "../../askUserDraft";
-import { state } from "../state";
+import { state, uiText as dialogText } from "../state";
 import { el, formatJson, shortSessionId, baseName } from "../helpers";
 import type { ChatAgentDialogState, ChatApprovalDialogState, ChatAskUserDialogState, ChatInlineDialogState, ChatModelDialogState, RuntimeDetailsTab, LogTab } from "../../panel";
 
 declare function acquireVsCodeApi(): { postMessage(msg: unknown): void };
 
-function dialogText(en: string, zh: string): string {
-  return state.uiLanguage === "zh-CN" ? zh : en;
-}
 
 function dialogTimeAgo(value?: string): string {
   if (!value) return "";

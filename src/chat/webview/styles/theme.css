@@ -49,47 +49,7 @@ body {
   height: 100vh;
 }
 
-/* ── Top Bar ───────────────────────────── */
-
-.top-bar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 6px 12px;
-  border-bottom: 1px solid var(--chrys-border);
-  flex-shrink: 0;
-  font-size: var(--chrys-font-size-base);
-}
-
-.top-bar-title {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-}
-
-.top-bar-actions {
-  display: flex;
-  gap: 6px;
-}
-
 .agent-name { font-weight: 600; }
-.model-name { color: var(--vscode-descriptionForeground, #888); font-size: var(--chrys-font-size-md); }
-
-.toolbar-btn {
-  background: transparent;
-  color: var(--vscode-descriptionForeground, #888);
-  border: 1px solid var(--chrys-border);
-  border-radius: 4px;
-  padding: 3px 8px;
-  font-size: var(--chrys-font-size-md);
-  cursor: pointer;
-}
-
-.toolbar-btn:hover {
-  color: var(--chrys-fg);
-  border-color: var(--chrys-accent);
-}
 
 /* ── Message Area ──────────────────────── */
 
@@ -247,12 +207,6 @@ body {
 
 .bubble.user.injection .user-message-line {
   display: block;
-}
-
-.user-turn-prefix {
-  color: var(--chrys-tui-cyan);
-  font-weight: 700;
-  user-select: none;
 }
 
 .user-message-text {
@@ -1371,13 +1325,6 @@ body {
   gap: 3px;
 }
 
-.sidebar-card {
-  margin-bottom: 4px;
-  padding: 3px 6px;
-  overflow: hidden;
-  cursor: pointer;
-}
-
 .sidebar-message {
   width: 100%;
   min-height: 28px;
@@ -1542,51 +1489,6 @@ body {
   color: var(--chrys-tui-muted);
 }
 
-.buddy-empty {
-  height: 100%;
-  display: grid;
-  place-items: center;
-  color: var(--chrys-tui-muted);
-  text-align: center;
-}
-
-.buddy-panel {
-  cursor: pointer;
-  user-select: none;
-}
-
-.buddy-panel.is-petting .buddy-sprite {
-  color: var(--chrys-tui-cyan);
-  filter: drop-shadow(0 0 6px rgba(255, 97, 216, 0.32));
-}
-
-.buddy-sprite {
-  margin: 18px 0 12px;
-  color: var(--chrys-tui-cyan);
-  font-family: var(--chrys-font-mono);
-  font-size: var(--chrys-font-size-md);
-  text-align: center;
-  white-space: pre;
-}
-
-.buddy-level {
-  color: var(--chrys-tui-cyan);
-  font-weight: 700;
-  text-align: center;
-}
-
-.buddy-info,
-.buddy-status {
-  margin-top: 12px;
-  color: var(--chrys-fg);
-  white-space: pre-wrap;
-  text-align: center;
-}
-
-.buddy-status {
-  color: var(--chrys-tui-green);
-}
-
 .event-row {
   display: grid;
   gap: 3px;
@@ -1645,19 +1547,6 @@ body {
 .event-state,
 .event-buddy {
   color: var(--chrys-tui-cyan);
-}
-
-.sidebar-action {
-  display: block;
-  width: 100%;
-  margin: 0 0 6px;
-  padding: 6px 8px;
-  border: 1px solid rgba(175, 135, 255, 0.35);
-  background: transparent;
-  color: var(--chrys-fg);
-  text-align: left;
-  font: inherit;
-  cursor: pointer;
 }
 
 .message-area {
@@ -2169,7 +2058,6 @@ a:focus-visible,
   font-size: var(--chrys-font-size-sm);
 }
 
-.sidebar-action:hover,
 .prompt-chip:hover {
   color: var(--chrys-fg);
 }
@@ -3227,9 +3115,7 @@ button:active {
 .tool-card-action,
 .tool-shell-copy,
 .modal-button,
-.sidebar-action,
 .input-hint,
-.toolbar-btn,
 .runtime-tab,
 .sidebar-tab {
   border-radius: var(--chrys-radius);
@@ -3482,16 +3368,6 @@ button:active {
 .debug-actions .meta-link:hover .debug-icon,
 .debug-actions .meta-link:focus-visible .debug-icon {
   color: var(--chrys-fg);
-}
-
-.sidebar-action {
-  min-height: 30px;
-  border-color: var(--chrys-line-soft);
-}
-
-.sidebar-action:hover {
-  border-color: var(--chrys-tui-cyan);
-  background: var(--chrys-hover);
 }
 
 .session-meta {
@@ -4578,7 +4454,6 @@ textarea:disabled,
 .send-btn:disabled,
 .new-btn:disabled,
 .prompt-chip:disabled,
-.sidebar-action:disabled,
 .modal-button:disabled,
 .model-list-item:disabled,
 .inline-list-item:disabled {
@@ -4685,7 +4560,6 @@ textarea:disabled {
 .flash-highlight {
   animation: flash-highlight 1.5s ease-in-out;
 }
-
 
 /* Profile editors: searchable navigation and a quiet form surface. */
 .modal-backdrop { padding: 20px; background: #0009; }
@@ -4910,3 +4784,10 @@ textarea:disabled {
 .agent-clone-notice { border-left:2px solid var(--vscode-textLink-foreground,#c49ff5); padding:8px 10px; color:var(--vscode-descriptionForeground,#aaa); }
 .inline-session-row-clickable:focus-visible { outline:1px solid var(--vscode-focusBorder,#c49ff5); outline-offset:-1px; }
 .inline-session-row-clickable[hidden] { display:none; }
+
+/* Long transcripts: skip layout and paint for messages scrolled far out of view. */
+.message-area > .bubble,
+.message-area > .tool-group {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 120px;
+}

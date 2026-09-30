@@ -1,5 +1,16 @@
 import { formatCount } from "../../common/utils";
 
+/**
+ * Build a data: URI for an agent, tool or user supplied image. Raster image types only:
+ * SVG and non-image types can carry script or markup and never render inline.
+ */
+export function imageDataUri(mimeType: string | undefined, data: string | undefined): string | undefined {
+  const type = (mimeType ?? "").trim().toLowerCase();
+  if (!/^image\/[a-z0-9.+-]+$/.test(type) || type.startsWith("image/svg")) return undefined;
+  if (!data || !/^[A-Za-z0-9+/=\s]+$/.test(data)) return undefined;
+  return `data:${type};base64,${data}`;
+}
+
 export function el(tag: string, attrs: Record<string, string | undefined> = {}, ...children: (string | Node)[]): HTMLElement {
   const e = document.createElement(tag);
   for (const [k, v] of Object.entries(attrs)) {

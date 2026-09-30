@@ -3,9 +3,10 @@ import { rt } from "../state/runtime";
 import * as vscode from "vscode";
 import type { SessionInfo } from "../acp/types";
 import type { SessionManager } from "../session/manager";
-import { resolveUiLanguage } from "../common/i18n";
 import { logError } from "../common/logging";
 import { findSessionJsonPath } from "../common/sessionFiles";
+import { hostUiLanguage, localized as treeText } from "../common/hostI18n";
+import { relativeSessionTime, sessionMetaLine } from "../common/sessionFormat";
 
 type DateGroupKey = "today" | "yesterday" | "thisWeek" | "older";
 type GroupKey = "actions" | "current" | DateGroupKey;
@@ -32,11 +33,7 @@ export type SessionTreeDiagnosticsSnapshot = {
 };
 
 function zh(): boolean {
-  return resolveUiLanguage(vscode.workspace.getConfiguration("chrys").get<string>("ui.language"), vscode.env.language) === "zh-CN";
-}
-
-function treeText(en: string, zhText: string): string {
-  return zh() ? zhText : en;
+  return hostUiLanguage() === "zh-CN";
 }
 
 function groupLabel(key: GroupKey): string {
@@ -159,29 +156,6 @@ const TREE_ACTIONS: TreeAction[] = [
   },
 ];
 
-function relativeTime(iso: string): string {
-  const ms = Date.now() - new Date(iso).getTime();
-  const seconds = Math.floor(ms / 1000);
-  if (zh()) {
-    if (seconds < 60) return "刚刚";
-    const minutes = Math.floor(seconds / 60);
-    if (minutes < 60) return `${minutes} 分钟前`;
-    const hours = Math.floor(minutes / 60);
-    if (hours < 24) return `${hours} 小时前`;
-    const days = Math.floor(hours / 24);
-    if (days < 30) return `${days} 天前`;
-    return new Date(iso).toLocaleDateString("zh-CN");
-  }
-  if (seconds < 60) return "just now";
-  const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) return `${minutes}m ago`;
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours}h ago`;
-  const days = Math.floor(hours / 24);
-  if (days < 30) return `${days}d ago`;
-  return new Date(iso).toLocaleDateString();
-}
-
 function formatTimestamp(dateStr: string | undefined): string {
   if (!dateStr) return "";
   const d = new Date(dateStr);
@@ -205,28 +179,6 @@ function formatTimestamp(dateStr: string | undefined): string {
   if (zh()) return d.getFullYear() === now.getFullYear() ? `${d.getMonth() + 1}月${d.getDate()}日` : `${d.getFullYear()}年${d.getMonth() + 1}月${d.getDate()}日`;
   if (d.getFullYear() === now.getFullYear()) return `${months[d.getMonth()]} ${d.getDate()}`;
   return `${months[d.getMonth()]} ${d.getDate()}, ${d.getFullYear()}`;
-}
-
-function stringMeta(meta: Record<string, unknown>, key: string): string | undefined {
-  const value = meta[key];
-  return typeof value === "string" && value ? value : undefined;
-}
-
-function numberMeta(meta: Record<string, unknown>, key: string): number | undefined {
-  const value = meta[key];
-  return typeof value === "number" ? value : undefined;
-}
-
-function sessionMetaLine(info: SessionInfo): string {
-  const meta = info._meta ?? {};
-  const messageCount = numberMeta(meta, "message_count") ?? numberMeta(meta, "messageCount");
-  const parts = [
-    stringMeta(meta, "agentDisplayName") ?? stringMeta(meta, "agentProfile") ?? stringMeta(meta, "agent_profile") ?? stringMeta(meta, "agent") ?? stringMeta(meta, "profile"),
-    stringMeta(meta, "modelProfile") ?? stringMeta(meta, "model_profile") ?? stringMeta(meta, "model"),
-    messageCount !== undefined ? treeText(`${messageCount} messages`, `${messageCount} 条消息`) : undefined,
-    stringMeta(meta, "sessionSizeHuman"),
-  ].filter((part): part is string => Boolean(part));
-  return parts.join(" · ");
 }
 
 export class SessionTreeItem extends vscode.TreeItem {
@@ -253,18 +205,9 @@ export class SessionTreeItem extends vscode.TreeItem {
     } else if (kind === "session" && sessionInfo) {
       const isCurrent = Boolean(currentSessionId && sessionInfo.sessionId === currentSessionId);
       const metaLine = sessionMetaLine(sessionInfo);
-      const sessionJsonPath = findSessionJsonPath(sessionInfo.sessionId);
       this.description = [isCurrent ? treeText("current", "当前") : undefined, formatTimestamp(sessionInfo.updatedAt), metaLine].filter(Boolean).join("  ");
-      this.tooltip = [
-        `${treeText("Title", "标题")}: ${sessionInfo.title ?? treeText("Untitled", "无标题")}`,
-        sessionInfo._meta?.vsixLocalName ? treeText(`TUI title: ${sessionInfo._meta.vsixBackendTitle}`, `TUI 标题：${sessionInfo._meta.vsixBackendTitle}`) : "",
-        metaLine,
-        `${treeText("Last active", "最近活动")}: ${sessionInfo.updatedAt ? relativeTime(sessionInfo.updatedAt) : treeText("unknown", "未知")}`,
-        `${treeText("Session", "会话")}: ${sessionInfo.sessionId}`,
-        `${treeText("Workspace", "工作区")}: ${sessionInfo.cwd}`,
-        `${treeText("local session.json", "本地 session.json")}: ${sessionJsonPath ?? treeText("not found on this host", "当前主机未找到")}`,
-        treeText("Right-click to copy a parity-debug summary.", "右键可复制用于排查 VSIX/TUI 差异的会话摘要。"),
-      ].filter(Boolean).join("\n");
+      // The tooltip probes the file system for session.json; build it on hover in
+      // resolveTreeItem instead of for every row on every refresh.
       this.command = {
         command: "chrys.loadSessionFromTree",
         title: treeText("Load Session", "加载会话"),
@@ -283,6 +226,25 @@ export class SessionTreeItem extends vscode.TreeItem {
   }
 }
 
+export function sessionTreeTooltip(sessionInfo: SessionInfo): string {
+  const sessionJsonPath = findSessionJsonPath(sessionInfo.sessionId);
+  return [
+    `${treeText("Title", "标题")}: ${sessionInfo.title ?? treeText("Untitled", "无标题")}`,
+    sessionInfo._meta?.vsixLocalName ? treeText(`TUI title: ${sessionInfo._meta.vsixBackendTitle}`, `TUI 标题：${sessionInfo._meta.vsixBackendTitle}`) : "",
+    sessionMetaLine(sessionInfo),
+    `${treeText("Last active", "最近活动")}: ${sessionInfo.updatedAt ? relativeSessionTime(sessionInfo.updatedAt) : treeText("unknown", "未知")}`,
+    `${treeText("Session", "会话")}: ${sessionInfo.sessionId}`,
+    `${treeText("Workspace", "工作区")}: ${sessionInfo.cwd}`,
+    `${treeText("local session.json", "本地 session.json")}: ${sessionJsonPath ?? treeText("not found on this host", "当前主机未找到")}`,
+    treeText("Right-click to copy a parity-debug summary.", "右键可复制用于排查 VSIX/TUI 差异的会话摘要。"),
+  ].filter(Boolean).join("\n");
+}
+
+/** Coalesces refresh bursts (tab focus, session info and runtime updates). */
+const REFRESH_DEBOUNCE_MS = 150;
+/** One session/list result serves the root and every expanded group of a refresh. */
+const SESSION_LIST_CACHE_MS = 2000;
+
 export class SessionTreeProvider implements vscode.TreeDataProvider<SessionTreeItem> {
   private _onDidChangeTreeData = new vscode.EventEmitter<SessionTreeItem | undefined | null | void>();
   readonly onDidChangeTreeData = this._onDidChangeTreeData.event;
@@ -292,6 +254,8 @@ export class SessionTreeProvider implements vscode.TreeDataProvider<SessionTreeI
   private lastTotalSessions = 0;
   private lastGroupCounts: Partial<Record<GroupKey, number>> = {};
   private lastCurrentSessionInList = false;
+  private sessionList: { promise: Promise<SessionInfo[]>; at: number; key: string } | null = null;
+  private refreshTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(
     private getSessionManager: () => SessionManager | undefined,
@@ -300,8 +264,21 @@ export class SessionTreeProvider implements vscode.TreeDataProvider<SessionTreeI
   ) {}
 
   refresh(): void {
-    this.lastRefreshAt = new Date().toISOString();
-    this._onDidChangeTreeData.fire();
+    this.sessionList = null;
+    if (this.refreshTimer) return;
+    this.refreshTimer = setTimeout(() => {
+      this.refreshTimer = null;
+      this.sessionList = null;
+      this.lastRefreshAt = new Date().toISOString();
+      this._onDidChangeTreeData.fire();
+    }, REFRESH_DEBOUNCE_MS);
+  }
+
+  resolveTreeItem(item: vscode.TreeItem, element: SessionTreeItem): vscode.TreeItem {
+    if (element.kind === "session" && element.sessionInfo && !item.tooltip) {
+      item.tooltip = sessionTreeTooltip(element.sessionInfo);
+    }
+    return item;
   }
 
   diagnosticsSnapshot(): SessionTreeDiagnosticsSnapshot {
@@ -328,7 +305,16 @@ export class SessionTreeProvider implements vscode.TreeDataProvider<SessionTreeI
     return this.getGroupItems();
   }
 
-  private async fetchSessions(): Promise<SessionInfo[]> {
+  private fetchSessions(): Promise<SessionInfo[]> {
+    const key = `${this.getCwd() ?? ""}`;
+    const cached = this.sessionList;
+    if (cached && cached.key === key && this.getSessionManager() && Date.now() - cached.at < SESSION_LIST_CACHE_MS) return cached.promise;
+    const promise = this.fetchSessionsUncached();
+    this.sessionList = { promise, at: Date.now(), key };
+    return promise;
+  }
+
+  private async fetchSessionsUncached(): Promise<SessionInfo[]> {
     const sm = this.getSessionManager();
     const cwd = this.getCwd();
     if (!sm || !cwd) {

@@ -8,6 +8,7 @@ import { summonWindow, canSummon } from "../companion/summon";
 import { applyCompanionGrowthEvent, defaultCompanionGrowth, experienceForLevel, levelFromExperience } from "../companion/growth";
 import {
   awardCompanionExperience,
+  flushCompanionWrites,
   addressCompanion,
   loadCompanionViewState,
   petCompanion,
@@ -494,5 +495,48 @@ describe("companion store", () => {
     expect(state.pool.map((card) => card.name)).toContain("Workspace 白泽");
     expect(state.pool.map((card) => card.id)).not.toContain("invalid-no-name");
     fs.rmSync(workspace, { recursive: true, force: true });
+  });
+});
+
+describe("companion store caching", () => {
+  it("keeps edits made by another window while usage XP is waiting to be written", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "companion-merge-"));
+    try {
+      const options = { companionRootDir: root, workspaceDir: undefined };
+      summonCompanion(options, new Date(2026, 5, 24, 10, 0, 0));
+      const file = path.join(root, "collection.json");
+      const before = JSON.parse(fs.readFileSync(file, "utf8")).cards[0].growth.experience as number;
+      awardCompanionExperience(options, { kind: "tool_completed", experience: 8 });
+      // Another window renames the companion and mutes replies before the batch is written.
+      const external = JSON.parse(fs.readFileSync(file, "utf8"));
+      external.cards[0].displayName = "外部改名";
+      external.muted = true;
+      fs.writeFileSync(file, JSON.stringify(external));
+      flushCompanionWrites();
+      const saved = JSON.parse(fs.readFileSync(file, "utf8"));
+      expect(saved.cards[0].displayName).toBe("外部改名");
+      expect(saved.muted).toBe(true);
+      expect(saved.cards[0].growth.experience).toBe(before + 8);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("batches usage XP writes and flushes them on demand", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "companion-cache-"));
+    try {
+      const options = { companionRootDir: root, workspaceDir: undefined };
+      summonCompanion(options, new Date(2026, 5, 24, 10, 0, 0));
+      const onDisk = () => JSON.parse(fs.readFileSync(path.join(root, "collection.json"), "utf8")).cards[0].growth.experience as number;
+      const before = onDisk();
+      const awarded = awardCompanionExperience(options, { kind: "tool_completed", experience: 8 });
+      expect(awarded.activeCard?.growth.experience).toBe(before + 8);
+      expect(loadCompanionViewState(options).activeCard?.growth.experience).toBe(before + 8);
+      expect(onDisk()).toBe(before);
+      flushCompanionWrites();
+      expect(onDisk()).toBe(before + 8);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
   });
 });

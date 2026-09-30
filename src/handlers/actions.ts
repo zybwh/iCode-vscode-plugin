@@ -7,8 +7,6 @@ import { logInfo, logWarn, logError } from "../common/logging";
 import { chatPanelState } from "../common/chatPanelState";
 import { applyPreferredDefaultsToNewSession } from "../session/defaults";
 import { awardCompanionActiveMinutes, awardCompanionUsageEvent, handleCompanionCommand, handleCompanionDirectAddress } from "./companion";
-import { resolveUiLanguage } from "../common/i18n";
-import { refreshRuntimeSnapshot } from "../handlers/notifications";
 import {
   openSessionsDialog,
   openAgentsDialog,
@@ -46,6 +44,7 @@ import {
 import { showManagementPanel } from "../ui/management";
 import type { ContentBlock } from "../acp/types";
 import type { ChatCommand } from "../chat/panel";
+import { localized as uiText } from "../common/hostI18n";
 
 // ──────────────────────────────────────────────
 // Send message
@@ -83,7 +82,17 @@ export async function handleSendMessage(text: string, blocks: ContentBlock[]): P
     void rememberPrompt(rt.extensionContext.workspaceState, rt.currentCwd, text).catch(error => logWarn(`Could not save prompt history: ${String(error)}`));
   }
   const sessionId = rt.currentSessionId;
-  const ownsTurn = () => rt.sessionManager === sessionManager && rt.currentSessionId === sessionId;
+  let promptTurn: number | null = null;
+  const ownsTurn = () => rt.sessionManager === sessionManager
+    && rt.currentSessionId === sessionId
+    && (promptTurn === null || sessionManager.turn === promptTurn);
+
+  if (sessionManager.state === "cancelling") {
+    // A message sent right after Stop starts a new turn once the cancelled one settles,
+    // instead of being injected into the turn that is shutting down.
+    await sessionManager.whenCancelSettled();
+    if (!ownsTurn()) return;
+  }
 
   if (rt.sessionManager.state === "running" || rt.sessionManager.state === "cancelling") {
     logInfo("Queueing prompt as a mid-run injection.");
@@ -124,7 +133,9 @@ export async function handleSendMessage(text: string, blocks: ContentBlock[]): P
   const turnStartedAtMs = Date.now();
 
   try {
-    await sessionManager.sendPrompt(messageBlocks);
+    const prompt = sessionManager.sendPrompt(messageBlocks);
+    promptTurn = sessionManager.turn;
+    await prompt;
     if (ownsTurn()) awardCompanionUsageEvent("turn_completed");
     logInfo("Prompt request completed.");
   } catch (err) {
@@ -210,7 +221,6 @@ export async function ensureActiveSessionForPrompt(text: string): Promise<boolea
     if (rt.sessionManager !== sessionManager) return false;
     rt.currentSessionId = sessionId;
     await applyPreferredDefaultsToNewSession();
-    await refreshRuntimeSnapshot();
     rt.persistCurrentSession();
     rt.chatPanel?.setState(chatPanelState());
     rt.chatPanel?.appendDebugEvent("SessionNewSucceeded", rt.currentSessionId);
@@ -490,10 +500,6 @@ export async function handleSleepSkip(toolCallId: string): Promise<void> {
   rt.chatPanel?.appendDebugEvent("SleepSkip", toolCallId);
 }
 
-function uiText(en: string, zh: string): string {
-  const language = resolveUiLanguage(vscode.workspace.getConfiguration("chrys").get<string>("ui.language"), vscode.env.language);
-  return language === "zh-CN" ? zh : en;
-}
 
 async function showActionUnavailable(eventName: string, actionName: string, message: string): Promise<void> {
   rt.chatPanel?.appendDebugEvent(eventName, actionName);

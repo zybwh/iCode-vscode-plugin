@@ -3,7 +3,7 @@ import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import * as os from "node:os";
 import { createHash } from "node:crypto";
-import { checksumFor, installRuntime, runtimeTarget, launcherText, managedRuntime, type InstallDependencies } from "../runtime/install";
+import { checksumFor, installRuntime, runtimeTarget, launcherText, managedRuntime, pruneStaleRuntimes, STALE_RUNTIME_GRACE_MS, type InstallDependencies } from "../runtime/install";
 import { resolveRuntime } from "../runtime/resolve";
 const target = runtimeTarget();
 const payload = Buffer.from('release fixture');
@@ -88,5 +88,58 @@ describe('managed runtime installation', () => {
         await fs.mkdir(path.join(root, 'runtimes'));
         await fs.writeFile(path.join(root, 'runtimes/active.json'), JSON.stringify({ directory: '../../outside', launcher: target.launcher }));
         expect(await managedRuntime(root)).toBeNull();
+    }));
+});
+describe('managed runtime cleanup', () => {
+    it('prunes superseded runtimes only after their grace period', async () => temporary(async (root) => {
+        const io = dependencies();
+        await installRuntime(root, new AbortController().signal, () => { }, io);
+        await installRuntime(root, new AbortController().signal, () => { }, io);
+        const runtimes = path.join(root, 'runtimes');
+        const active = JSON.parse(await fs.readFile(path.join(runtimes, 'active.json'), 'utf8')).directory as string;
+        const directories = (await fs.readdir(runtimes)).filter(name => name.startsWith('icode-'));
+        expect(directories).toHaveLength(2);
+        expect(await pruneStaleRuntimes(root)).toEqual([]);
+        const removed = await pruneStaleRuntimes(root, Date.now() + STALE_RUNTIME_GRACE_MS + 1000);
+        expect(removed).toEqual(directories.filter(name => name !== active));
+        expect((await fs.readdir(runtimes)).filter(name => name.startsWith('icode-'))).toEqual([active]);
+        expect(await managedRuntime(root)).toContain(active);
+    }));
+});
+describe('legacy runtime cleanup', () => {
+    it('starts the grace period when an old runtime is first seen, not from its install time', async () => temporary(async (root) => {
+        const io = dependencies();
+        await installRuntime(root, new AbortController().signal, () => { }, io);
+        const runtimes = path.join(root, 'runtimes');
+        // A runtime superseded before supersession was recorded, installed long ago.
+        const legacy = path.join(runtimes, 'icode-0.27.0-legacy');
+        await fs.mkdir(legacy);
+        const old = new Date(Date.now() - 30 * STALE_RUNTIME_GRACE_MS);
+        await fs.utimes(legacy, old, old);
+        const now = Date.now();
+        expect(await pruneStaleRuntimes(root, now)).toEqual([]);
+        expect(await pruneStaleRuntimes(root, now + STALE_RUNTIME_GRACE_MS - 1000)).toEqual([]);
+        expect(await pruneStaleRuntimes(root, now + STALE_RUNTIME_GRACE_MS + 1000)).toEqual(['icode-0.27.0-legacy']);
+        expect((await fs.readdir(runtimes)).some(name => name.includes('legacy'))).toBe(false);
+    }));
+});
+describe('shared installation requests', () => {
+    it('reports progress to every caller and keeps installing until all callers cancel', async () => temporary(async (root) => {
+        let release!: () => void;
+        const gate = new Promise<void>((resolve) => { release = resolve; });
+        const io = dependencies();
+        io.validate = vi.fn(async () => { await gate; });
+        const firstController = new AbortController();
+        const firstStages: string[] = [], secondStages: string[] = [];
+        const first = installRuntime(root, firstController.signal, (stage) => firstStages.push(stage), io);
+        const second = installRuntime(root, new AbortController().signal, (stage) => secondStages.push(stage), io);
+        await vi.waitFor(() => expect(io.validate).toHaveBeenCalled());
+        firstController.abort();
+        await expect(first).rejects.toBeDefined();
+        release();
+        expect(await second).toContain(target.launcher);
+        expect(secondStages).toContain('ready');
+        expect(firstStages).toContain('download');
+        expect(firstStages).not.toContain('ready');
     }));
 });

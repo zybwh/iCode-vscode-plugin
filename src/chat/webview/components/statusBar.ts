@@ -25,9 +25,15 @@ export function statusLabel(sessionState: ChatPanelState["sessionState"]): strin
 }
 
 export function currentToolStats(): { total: number; done: number } {
-  const toolMessages = state.messages.filter((m) => m.kind === "tool_call" || m.kind === "tool_result");
-  const done = toolMessages.filter((m) => effectiveToolStatus(m) !== "pending" && effectiveToolStatus(m) !== "in_progress").length;
-  return { total: toolMessages.length, done };
+  let total = 0;
+  let done = 0;
+  for (const message of state.messages) {
+    if (message.kind !== "tool_call" && message.kind !== "tool_result") continue;
+    total += 1;
+    const status = effectiveToolStatus(message);
+    if (status !== "pending" && status !== "in_progress") done += 1;
+  }
+  return { total, done };
 }
 
 export function hasStatusRunContent(sessionState: ChatPanelState["sessionState"], toolStats: { total: number }): boolean {

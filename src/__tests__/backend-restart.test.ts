@@ -117,3 +117,15 @@ it("settles a pending AskUser before replacing its handler", async () => {
   expect(rt.activeAskUserRequest).toBeNull();
   expect(rt.askUserHandler).not.toBe(oldHandler);
 });
+
+it("does not report ready when the backend exits during session initialization", async () => {
+  // The process dies after initialize while the startup restore is still running.
+  harness.initialize.mockImplementationOnce(async () => {
+    (rt.processManager as unknown as { state: string }).state = "stopped";
+    return { protocolVersion: 1, agentInfo: { version: "0.22.5" } };
+  });
+  rt.connectionState = "disconnected";
+  const connected = await restartBackendConnection(context, process.execPath);
+  expect(connected).toBe(false);
+  expect(rt.connectionState).not.toBe("ready");
+});

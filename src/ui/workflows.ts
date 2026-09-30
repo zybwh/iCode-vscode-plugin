@@ -1,15 +1,12 @@
 import * as vscode from "vscode";
 import * as fs from "node:fs/promises";
 import { createHash } from "node:crypto";
-import { resolveUiLanguage } from "../common/i18n";
 import { runIcodeCli, parseWorkflowList, workflowRunArgs, type WorkflowSource } from "../workflow/cli";
+import { localized as t } from "../common/hostI18n";
 
 const active = new Map<string, AbortController>();
 interface RunRecord { workflow: string; cwd: string; time: string; result: string }
 const historyKey = "chrys.workflowRuns";
-function t(en: string, zh: string): string {
-  return resolveUiLanguage(vscode.workspace.getConfiguration("chrys").get<string>("ui.language"), vscode.env.language) === "zh-CN" ? zh : en;
-}
 async function showResult(result: string): Promise<void> {
   await vscode.window.showTextDocument(await vscode.workspace.openTextDocument({ language: "json", content: result }), { preview: false });
 }

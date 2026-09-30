@@ -46,6 +46,7 @@ export function rememberPreferredConfigOption(key: string, value: string): void 
   }
 }
 
+/** Applies VSIX defaults and leaves rt.currentRuntime refreshed; callers need no extra snapshot. */
 export async function applyPreferredDefaultsToNewSession(): Promise<void> {
   if (!rt.sessionManager || !rt.currentSessionId) return;
 
@@ -66,6 +67,7 @@ export async function applyPreferredDefaultsToNewSession(): Promise<void> {
     }
   }
 
+  let modelChanged = false;
   const desiredModel = rt.preferredModelProfileId;
   const currentModel = rt.currentRuntime?.modelProfileId || "";
   if (desiredModel && desiredModel !== currentModel) {
@@ -73,7 +75,7 @@ export async function applyPreferredDefaultsToNewSession(): Promise<void> {
       logInfo(`Applying preferred model to new session: ${desiredModel}`);
       await rt.sessionManager.setModel(desiredModel);
       rt.chatPanel?.appendDebugEvent("NewSessionDefault", `model=${desiredModel}`);
-      await refreshRuntimeSnapshot();
+      modelChanged = true;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       logWarn(`Failed to apply preferred model ${desiredModel}: ${message}`);
@@ -95,6 +97,7 @@ export async function applyPreferredDefaultsToNewSession(): Promise<void> {
     }
   }
 
+  if (modelChanged) await refreshRuntimeSnapshot();
   rt.chatPanel?.setState(chatPanelState());
 }
 

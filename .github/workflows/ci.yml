@@ -54,9 +54,7 @@ jobs:
         run: npm test -- src/__tests__
       - name: Test license packaging
         run: npm run test:packaging
-      - name: Build bundles
-        run: npm run build
-      - name: Package universal VSIX
+      - name: Build and package universal VSIX
         run: npm run package
       - uses: actions/upload-artifact@v7
         with:

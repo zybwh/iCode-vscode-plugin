@@ -1,14 +1,13 @@
 import type { ChatMessage } from "../chat/provider";
 import type { RuntimeUpdateMessage } from "../acp/types";
 import { mergeRuntimeSnapshot } from "../common/runtimeSnapshot";
-import * as vscode from "vscode";
 import { rt } from "../state/runtime";
 import { nextMessageId } from "../chat/provider";
 import { formatCount } from "../common/utils";
 import { logInfo, logWarn, logError } from "../common/logging";
 import { chatPanelState } from "../common/chatPanelState";
 import { formatRollbackResultMessage } from "../common/provenanceDisplay";
-import { resolveUiLanguage, type UiLanguage } from "../common/i18n";
+import { type UiLanguage } from "../common/i18n";
 import type {
   RuntimeSnapshot,
   ChrysErrorNotification,
@@ -27,6 +26,7 @@ import type {
   SubAgentNotification,
   CompactionNotification,
 } from "../acp/types";
+import { hostUiLanguage } from "../common/hostI18n";
 
 // Re-export pure runtime utility functions
 export {
@@ -57,7 +57,7 @@ export {
 // ──────────────────────────────────────────────
 
 function currentUiLanguage() {
-  return resolveUiLanguage(vscode.workspace.getConfiguration("chrys").get<string>("ui.language"), vscode.env.language);
+  return hostUiLanguage();
 }
 
 export function handleRuntimeUpdate(update: RuntimeUpdateMessage): void {
@@ -511,10 +511,18 @@ export function handleSubAgentEvent(eventName: string, update: SubAgentNotificat
     innerToolCalls.push({ toolName: String(payload.toolName ?? "unknown"), status: "running" });
   }
   if (eventName.endsWith("tool_call_result") && innerToolCalls) {
-    const result = String(payload.result ?? "");
+    // Every sub-agent event re-sends the whole list, so keep each result short.
+    const result = truncateSubAgentText(String(payload.result ?? ""), MAX_INNER_TOOL_RESULT_CHARS);
     const durationMs = typeof payload.durationMs === "number" ? payload.durationMs : undefined;
     // Find the most recent matching running entry by toolName and update it
-    const entry = [...innerToolCalls].reverse().find((tc) => tc.toolName === String(payload.toolName ?? "") && tc.status === "running");
+    const toolName = String(payload.toolName ?? "");
+    let entry: (typeof innerToolCalls)[number] | undefined;
+    for (let index = innerToolCalls.length - 1; index >= 0; index -= 1) {
+      if (innerToolCalls[index].toolName === toolName && innerToolCalls[index].status === "running") {
+        entry = innerToolCalls[index];
+        break;
+      }
+    }
     if (entry) {
       entry.status = "complete";
       entry.durationMs = durationMs;
@@ -594,6 +602,13 @@ export function handleSubAgentEvent(eventName: string, update: SubAgentNotificat
   }
 }
 
+const MAX_INNER_TOOL_RESULT_CHARS = 2000;
+const MAX_SUB_AGENT_OUTPUT_CHARS = 5000;
+
+function truncateSubAgentText(text: string, limit: number): string {
+  return text.length > limit ? `${text.slice(0, limit)}\n... (truncated, ${text.length} total chars)` : text;
+}
+
 export function formatSubAgentEvent(
   eventName: string,
   update: SubAgentNotification,
@@ -609,7 +624,7 @@ export function formatSubAgentEvent(
   }
   if (eventName.endsWith("tool_call_result")) {
     const dur = typeof payload.durationMs === "number" ? ` (${formatDurationMs(payload.durationMs)})` : "";
-    return `${base} completed tool ${String(payload.toolName ?? "unknown")}${dur}.\n\n${String(payload.result ?? "")}`;
+    return `${base} completed tool ${String(payload.toolName ?? "unknown")}${dur}.\n\n${truncateSubAgentText(String(payload.result ?? ""), MAX_SUB_AGENT_OUTPUT_CHARS)}`;
   }
   if (eventName.endsWith("progress")) {
     const toolCallCount = Number(payload.toolCallCount ?? 0);

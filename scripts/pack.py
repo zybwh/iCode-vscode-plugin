@@ -107,7 +107,7 @@ def validate_frontend_licenses(ext_dir: Path) -> list[Path]:
         approved.add(package_path)
         paths.append(license_path)
     bundled = set()
-    for bundle in ["extension.js", "webview.js"]:
+    for bundle in ["extension.js", "webview.js", "diagrams.js"]:
         metadata = ext_dir / "dist" / f"{bundle}.meta.json"
         if not metadata.is_file():
             raise SystemExit("build dependency inventory missing; run npm run build")
@@ -214,6 +214,7 @@ def main() -> None:
     <Asset Type="Microsoft.VisualStudio.Code.Manifest" Path="extension/package.json"/>
     <Asset Type="Microsoft.VisualStudio.Code.Installable" Path="extension/dist/extension.js"/>
     <Asset Type="Microsoft.VisualStudio.Code.Installable" Path="extension/dist/webview.js"/>
+    <Asset Type="Microsoft.VisualStudio.Code.Installable" Path="extension/dist/diagrams.js"/>
     <Asset Type="Microsoft.VisualStudio.Code.Installable" Path="extension/dist/theme.css"/>
     <Asset Type="Microsoft.VisualStudio.Code.Installable" Path="extension/dist/assets"/>
     {binary_asset}
@@ -245,6 +246,7 @@ def main() -> None:
             z.write(capability_plan_path, "extension/FEATURE_PARITY.md")
         z.write(ext_dir / "dist" / "extension.js", "extension/dist/extension.js")
         z.write(ext_dir / "dist" / "webview.js", "extension/dist/webview.js")
+        z.write(ext_dir / "dist" / "diagrams.js", "extension/dist/diagrams.js")
         z.write(ext_dir / "dist" / "theme.css", "extension/dist/theme.css")
         assets_dir = ext_dir / "dist" / "assets"
         if assets_dir.exists():

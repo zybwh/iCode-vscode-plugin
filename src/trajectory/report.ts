@@ -1,4 +1,6 @@
 import { renderTerminalDiagram } from "../chat/webview/diagrams";
+// The host renders trajectory graphs synchronously, so it bundles the diagram engine eagerly.
+import "../chat/webview/diagramEngine";
 // Render the public chrys.trajectory.export/1 contract, never receipt-time estimates.
 type Row = Record<string, unknown>;
 function row(value: unknown): Row { return value && typeof value === "object" && !Array.isArray(value) ? value as Row : {}; }

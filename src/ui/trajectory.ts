@@ -3,10 +3,10 @@ import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 import { randomBytes } from "node:crypto";
-import { resolveUiLanguage } from "../common/i18n";
 import { runIcodeCli } from "../workflow/cli";
 import { parseTrajectory, trajectoryHtml } from "../trajectory/report";
 import type { ListSessionsResponse } from "../acp/types";
+import { hostUiLanguage } from "../common/hostI18n";
 
 type Source = { kind: "session" | "events"; value: string; cwd: string; label: string };
 export type TrajectoryFormat = "json" | "csv" | "perfetto" | "findings-csv";
@@ -18,7 +18,7 @@ export function disposeTrajectory(): void { for (const controller of controllers
 
 export async function openTrajectory(context: vscode.ExtensionContext, binary: string | null, cwd: string | null, sessionId: string | null,
   listSessions?: (cwd: string, cursor?: string) => Promise<ListSessionsResponse>): Promise<void> {
-  const zh = resolveUiLanguage(vscode.workspace.getConfiguration("chrys").get<string>("ui.language"), vscode.env.language) === "zh-CN";
+  const zh = hostUiLanguage() === "zh-CN";
   const t = (en: string, cn: string) => zh ? cn : en;
   if (!vscode.workspace.isTrusted) return;
   if (!binary || !cwd) throw new Error(t("Connect iCode and select a workspace first.", "请先连接 iCode 并选择工作区。"));

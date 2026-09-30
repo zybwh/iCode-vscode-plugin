@@ -1,4 +1,4 @@
-import { state } from "../state";
+import { state, uiText as text } from "../state";
 import { el } from "../helpers";
 import { companionRarityLabel } from "../../../companion/presentation";
 import { experienceForLevel } from "../../../companion/growth";
@@ -11,9 +11,6 @@ function petIsRecent(companion: CompanionViewState | null | undefined): boolean 
 }
 const rendered = new WeakMap<HTMLElement, { signature: string; content: HTMLElement }>();
 
-function text(en: string, zh: string): string {
-  return state.uiLanguage === "zh-CN" ? zh : en;
-}
 
 function assetUri(companion: CompanionViewState, assetPath: string): string {
   const base = companion.assetBaseUri?.replace(/\/$/, "");

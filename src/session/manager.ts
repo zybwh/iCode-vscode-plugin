@@ -15,12 +15,18 @@ import type {
   SetSessionModelResponse,
 } from "../acp/types";
 
+/** How long cancel() waits for the backend to settle the cancelled prompt before going idle. */
+export const CANCEL_SETTLE_TIMEOUT_MS = 3000;
+
 export class SessionManager {
   readonly acp: ChrysAcpClient;
   readonly stateMachine = new SessionStateMachine();
 
   private _currentSessionId: string | null = null;
   private _cwd: string | null = null;
+  private _turn = 0;
+  private _activePrompt: Promise<unknown> | null = null;
+  private _cancelling: Promise<void> | null = null;
 
   constructor(acp: ChrysAcpClient) {
     this.acp = acp;
@@ -36,6 +42,11 @@ export class SessionManager {
 
   get state(): SessionState {
     return this.stateMachine.state;
+  }
+
+  /** Increments for every prompt; a settled prompt only owns the state while its turn is current. */
+  get turn(): number {
+    return this._turn;
   }
 
   // ── Session lifecycle ──────────────────────
@@ -216,21 +227,65 @@ export class SessionManager {
   async sendPrompt(blocks: ContentBlock[], messageId?: string): Promise<void> {
     if (!this._currentSessionId) throw new Error("No active session");
     this.stateMachine.transition("running");
+    const turn = ++this._turn;
+    // prompt() handles the response — caller listens to sessionUpdate events
+    const prompt = this.acp.prompt(this._currentSessionId, blocks, messageId);
+    this._activePrompt = prompt;
     try {
-      // prompt() handles the response — caller listens to sessionUpdate events
-      await this.acp.prompt(this._currentSessionId, blocks, messageId);
+      await prompt;
     } finally {
-      this.stateMachine.force("idle");
+      // A prompt that settles after cancel() already released the turn must not
+      // reset the state of a newer turn.
+      if (this._turn === turn) {
+        this._activePrompt = null;
+        this.stateMachine.force("idle");
+      }
     }
   }
 
-  /** Cancel the current turn. */
-  async cancel(): Promise<void> {
+  /**
+   * Cancel the current turn. Stays "cancelling" until the backend settles the prompt
+   * (bounded by CANCEL_SETTLE_TIMEOUT_MS), so a new prompt cannot start while the
+   * cancelled one is still being answered.
+   */
+  async cancel(options: { waitForTurn?: boolean } = {}): Promise<void> {
     if (!this._currentSessionId) return;
-    if (this.stateMachine.isRunning) {
-      this.stateMachine.transition("cancelling");
+    if (!this.stateMachine.isRunning) return;
+    const cancelling = this._cancel(options);
+    const settled: Promise<void> = cancelling.catch(() => {}).finally(() => {
+      if (this._cancelling === settled) this._cancelling = null;
+    });
+    this._cancelling = settled;
+    return cancelling;
+  }
+
+  /** Resolves once an in-flight cancel() has returned the session to idle. */
+  whenCancelSettled(): Promise<void> {
+    return this._cancelling ?? Promise.resolve();
+  }
+
+  private async _cancel(options: { waitForTurn?: boolean }): Promise<void> {
+    if (!this._currentSessionId) return;
+    const turn = this._turn;
+    const prompt = this._activePrompt;
+    this.stateMachine.transition("cancelling");
+    try {
       await this.acp.cancel(this._currentSessionId);
-      this.stateMachine.force("idle");
+      if (prompt && options.waitForTurn !== false) {
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        await Promise.race([
+          prompt.then(() => {}, () => {}),
+          new Promise<void>((resolve) => { timer = setTimeout(resolve, CANCEL_SETTLE_TIMEOUT_MS); }),
+        ]);
+        clearTimeout(timer);
+      }
+    } finally {
+      if (this._turn === turn && !this.stateMachine.isIdle) {
+        // Release the turn: a late settlement of the cancelled prompt is ignored.
+        this._turn++;
+        this._activePrompt = null;
+        this.stateMachine.force("idle");
+      }
     }
   }
 
@@ -240,7 +295,7 @@ export class SessionManager {
 
     // Enforce: cancel before close if running
     if (this.stateMachine.isRunning) {
-      await this.cancel();
+      await this.cancel({ waitForTurn: false });
     }
 
     await this.acp.closeSession(this._currentSessionId);

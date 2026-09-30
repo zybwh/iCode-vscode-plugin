@@ -1,5 +1,5 @@
 import * as esbuild from "esbuild";
-import { cpSync, copyFileSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { cpSync, copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 
 const watch = process.argv.includes("--watch");
@@ -34,11 +34,25 @@ const webviewConfig = {
   minify: !watch,
 };
 
-function copyThemeCss() {
+async function buildThemeCss(minify) {
   const outfile = "dist/theme.css";
+  const source = "src/chat/webview/styles/theme.css";
   mkdirSync(dirname(outfile), { recursive: true });
-  copyFileSync("src/chat/webview/styles/theme.css", outfile);
+  if (!minify) {
+    copyFileSync(source, outfile);
+    return;
+  }
+  // Minify and merge duplicate rules; the webview CSP forbids inline styles anyway.
+  const result = await esbuild.transform(readFileSync(source, "utf8"), { loader: "css", minify: true, target: "chrome120" });
+  writeFileSync(outfile, result.code);
 }
+
+/** The Mermaid layout engine ships as its own bundle, loaded when a diagram first renders. */
+const diagramConfig = {
+  ...webviewConfig,
+  entryPoints: ["src/chat/webview/diagramEngine.ts"],
+  outfile: "dist/diagrams.js",
+};
 
 function copyWebviewAssets() {
   const source = "src/chat/webview/assets";
@@ -52,13 +66,18 @@ async function build() {
   if (watch) {
     const ctx = await esbuild.context(config);
     await ctx.watch();
-    copyThemeCss();
+    if (webview) await (await esbuild.context(diagramConfig)).watch();
+    await buildThemeCss(false);
     copyWebviewAssets();
     console.log(`[esbuild] watching ${webview ? "webview" : "extension"}...`);
   } else {
     const result = await esbuild.build(config);
     writeFileSync(`${config.outfile}.meta.json`, JSON.stringify(result.metafile));
-    copyThemeCss();
+    if (webview) {
+      const diagrams = await esbuild.build(diagramConfig);
+      writeFileSync(`${diagramConfig.outfile}.meta.json`, JSON.stringify(diagrams.metafile));
+    }
+    await buildThemeCss(true);
     copyWebviewAssets();
     console.log(`[esbuild] ${webview ? "webview" : "extension"} build complete`);
   }

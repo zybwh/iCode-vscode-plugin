@@ -1,5 +1,6 @@
 import { bindRuntime } from "../state/runtime";
 import * as vscode from "vscode";
+import { randomBytes } from "node:crypto";
 import type { ModelSummary, ProfileSummary } from "../acp/types";
 import type { UiLanguage } from "../common/i18n";
 
@@ -359,7 +360,7 @@ export class ManagementPanel {
   }
 
   private html(webview: vscode.Webview, initialTab: ManagementTab, language: UiLanguage): string {
-    const nonce = String(Date.now());
+    const nonce = randomBytes(16).toString("base64");
     const initialTabJson = JSON.stringify(initialTab);
     const labels = managementLabels(language);
     const labelsJson = JSON.stringify(labels);
@@ -368,7 +369,7 @@ export class ManagementPanel {
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline' ${webview.cspSource}; script-src 'nonce-${nonce}';">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline' ${webview.cspSource}; script-src 'nonce-${nonce}'; base-uri 'none'; form-action 'none';">
   <title>${escapeHtml(labels.panelTitle)}</title>
   <style>
     * { box-sizing: border-box; }

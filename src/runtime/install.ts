@@ -159,21 +159,146 @@ export async function managedRuntime(storage: string): Promise<string | null> {
         return null;
     }
 }
+/** Superseded runtimes are kept for a while because another window may still run them. */
+export const STALE_RUNTIME_GRACE_MS = 7 * 24 * 60 * 60 * 1000;
+const SUPERSEDED_RECORD = "superseded.json";
+async function readSupersededRecord(root: string): Promise<Record<string, number>> {
+    try {
+        const data = JSON.parse(await fs.readFile(path.join(root, SUPERSEDED_RECORD), "utf8")) as unknown;
+        if (!data || typeof data !== "object")
+            return {};
+        return Object.fromEntries(Object.entries(data as Record<string, unknown>).filter((entry): entry is [string, number] => typeof entry[1] === "number"));
+    }
+    catch {
+        return {};
+    }
+}
+async function writeSupersededRecord(root: string, record: Record<string, number>): Promise<void> {
+    await fs.writeFile(path.join(root, SUPERSEDED_RECORD), JSON.stringify(record, null, 2)).catch(() => { });
+}
+/** Start the grace period of a runtime that was just replaced as the active one. */
+async function markSuperseded(root: string, directory: string, now = Date.now()): Promise<void> {
+    const record = await readSupersededRecord(root);
+    record[directory] = now;
+    await writeSupersededRecord(root, record);
+}
+/**
+ * Best-effort removal of managed runtimes that are no longer active. Each install keeps
+ * the previous runtime intact for atomic activation; without pruning every reinstall or
+ * upgrade leaves a full runtime (hundreds of MB) behind in extension global storage.
+ * The grace period counts from when a runtime was first seen superseded (recorded in
+ * superseded.json), never from its install time, because another window may still run it.
+ */
+export async function pruneStaleRuntimes(storage: string, now = Date.now(), graceMs = STALE_RUNTIME_GRACE_MS): Promise<string[]> {
+    const root = path.join(storage, "runtimes");
+    const active = await activeRuntimeDirectory(root);
+    if (!active)
+        return [];
+    let entries: import("node:fs").Dirent[];
+    try {
+        entries = await fs.readdir(root, { withFileTypes: true });
+    }
+    catch {
+        return [];
+    }
+    const record = await readSupersededRecord(root);
+    const next: Record<string, number> = {};
+    const removed: string[] = [];
+    for (const entry of entries) {
+        if (!entry.isDirectory())
+            continue;
+        const directory = path.join(root, entry.name);
+        if (entry.name.startsWith(".trash-")) {
+            // Left over from an interrupted removal; nothing can be running from it.
+            await fs.rm(directory, { recursive: true, force: true }).catch(() => { });
+            continue;
+        }
+        if (entry.name === active || !/^icode-[a-zA-Z0-9.-]+$/.test(entry.name))
+            continue;
+        const supersededAt = record[entry.name] ?? now;
+        if (now - supersededAt < graceMs) {
+            next[entry.name] = supersededAt;
+            continue;
+        }
+        // Rename first: on Windows a runtime still in use cannot be renamed, so it is kept
+        // whole for a later prune instead of being half deleted.
+        const trash = path.join(root, `.trash-${entry.name}`);
+        try {
+            await fs.rename(directory, trash);
+        }
+        catch {
+            next[entry.name] = supersededAt;
+            continue;
+        }
+        await fs.rm(trash, { recursive: true, force: true }).catch(() => { });
+        removed.push(entry.name);
+    }
+    if (JSON.stringify(next) !== JSON.stringify(record))
+        await writeSupersededRecord(root, next);
+    return removed;
+}
+async function activeRuntimeDirectory(root: string): Promise<string | null> {
+    try {
+        const record = JSON.parse(await fs.readFile(path.join(root, "active.json"), "utf8")) as { directory?: unknown };
+        return typeof record.directory === "string" ? record.directory : null;
+    }
+    catch {
+        return null;
+    }
+}
 export interface InstallDependencies {
     download: typeof download;
     extract: typeof extractBinary;
     validate: typeof validateRuntime;
 }
-const installs = new Map<string, Promise<string>>();
-/** Unique candidates + atomic pointer keep any previous working runtime intact. */
+interface SharedInstall {
+    operation: Promise<string>;
+    controller: AbortController;
+    listeners: Set<InstallProgress>;
+    callers: number;
+    aborted: number;
+}
+const installs = new Map<string, SharedInstall>();
+/**
+ * Unique candidates + atomic pointer keep any previous working runtime intact.
+ * Concurrent calls for one storage share a single install: every caller receives
+ * progress, and the download is aborted only once every caller has cancelled.
+ */
 export function installRuntime(storage: string, signal: AbortSignal, progress: InstallProgress, dependencies: Partial<InstallDependencies> = {}, target = runtimeTarget()): Promise<string> {
     const key = path.resolve(storage);
-    const pending = installs.get(key);
-    if (pending)
-        return pending;
-    const operation = performInstall(key, signal, progress, { download, extract: extractBinary, validate: validateRuntime, ...dependencies }, target).finally(() => installs.delete(key));
-    installs.set(key, operation);
-    return operation;
+    let shared = installs.get(key);
+    if (!shared) {
+        const controller = new AbortController();
+        const listeners = new Set<InstallProgress>();
+        const operation = performInstall(key, controller.signal, (stage, bytes, total) => {
+            for (const listener of listeners) listener(stage, bytes, total);
+        }, { download, extract: extractBinary, validate: validateRuntime, ...dependencies }, target).finally(() => installs.delete(key));
+        shared = { operation, controller, listeners, callers: 0, aborted: 0 };
+        installs.set(key, shared);
+    }
+    const current = shared;
+    current.callers += 1;
+    current.listeners.add(progress);
+    let leave: ((reason: unknown) => void) | undefined;
+    // A caller that cancels stops waiting while other callers keep the install alive;
+    // when the last caller cancels, the install itself aborts and cleans up first.
+    const cancelled = new Promise<never>((_, reject) => { leave = reject; });
+    const onAbort = () => {
+        current.listeners.delete(progress);
+        current.aborted += 1;
+        if (current.aborted >= current.callers)
+            current.controller.abort(signal.reason);
+        else
+            leave?.(signal.reason);
+    };
+    if (signal.aborted)
+        onAbort();
+    else
+        signal.addEventListener("abort", onAbort, { once: true });
+    return Promise.race([current.operation, cancelled]).finally(() => {
+        signal.removeEventListener("abort", onAbort);
+        current.listeners.delete(progress);
+    });
 }
 async function performInstall(storage: string, signal: AbortSignal, progress: InstallProgress, io: InstallDependencies, target: RuntimeTarget): Promise<string> {
     const root = path.join(storage, "runtimes");
@@ -202,8 +327,12 @@ async function performInstall(storage: string, signal: AbortSignal, progress: In
         await fs.rm(archive);
         await fs.writeFile(pointer, JSON.stringify({ directory, launcher: target.launcher }));
         signal.throwIfAborted();
+        const previous = await activeRuntimeDirectory(root);
         await fs.rename(pointer, path.join(root, "active.json"));
         activated = true;
+        if (previous && previous !== directory)
+            await markSuperseded(root, previous);
+        await pruneStaleRuntimes(storage).catch(() => []);
         progress("ready");
         return launcher;
     }

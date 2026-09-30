@@ -1,15 +1,12 @@
 import type { ChatMessage } from "../../provider";
-import { state } from "../state";
-import { el, formatTime, formatDurationMs } from "../helpers";
+import { state, uiText as messageText } from "../state";
+import { el, formatTime, formatDurationMs, imageDataUri } from "../helpers";
 import { renderMarkdown } from "../renderer";
 import { processThinkTags } from "../thinkTags";
 import { renderToolCall, effectiveToolStatus, normalizeToolKind, toolKindLabel } from "./toolCards";
 import { updateStatusBar } from "./statusBar";
 import type { ToolGroupState } from "../state";
 
-function messageText(en: string, zh: string): string {
-  return state.uiLanguage === "zh-CN" ? zh : en;
-}
 
 export function isToolMessage(msg: ChatMessage): boolean {
   return msg.kind === "tool_call" || msg.kind === "tool_result";
@@ -65,7 +62,7 @@ function renderUserContent(msg: ChatMessage): HTMLElement {
       const meta = [image.mimeType, size, compressed].filter(Boolean).join(" · ");
       return el("figure", { class: "image-attachment" },
         el("img", {
-          src: `data:${image.mimeType};base64,${image.data}`,
+          src: imageDataUri(image.mimeType, image.data),
           alt: image.name,
           loading: "lazy",
         }),
@@ -226,7 +223,7 @@ export function finishActiveToolGroup(collapse: boolean, statusBar: HTMLElement)
 
 export function updateToolGroup(group: ToolGroupState, statusBar: HTMLElement): void {
   const groupMessages = group.ids
-    .map((id) => state.messages.find((message) => message.id === id))
+    .map((id) => state.messageById.get(id))
     .filter((message): message is ChatMessage => message !== undefined);
   const total = groupMessages.length;
   const done = groupMessages.filter(isToolDone).length;
