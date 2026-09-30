@@ -23,6 +23,15 @@ function readSource(...segments: string[]): string {
   return fs.readFileSync(path.join(extensionRoot, ...segments), "utf8").replace(/\r\n/g, "\n");
 }
 
+/** src/ui/dialogs.ts is a barrel over src/ui/dialogs/*.ts; policy checks cover the whole family. */
+function readDialogsSource(): string {
+  const directory = path.join(extensionRoot, "src", "ui", "dialogs");
+  return [
+    readSource("src", "ui", "dialogs.ts"),
+    ...fs.readdirSync(directory).filter((name) => name.endsWith(".ts")).sort().map((name) => readSource("src", "ui", "dialogs", name)),
+  ].join("\n");
+}
+
 type WebpAnimationFrame = {
   duration: number;
   payloadSignature: string;
@@ -557,7 +566,7 @@ describe("VSIX release manifest", () => {
 
   it("surfaces iCode mutation provenance and rollback details", () => {
     const typesSource = fs.readFileSync(path.join(extensionRoot, "src", "acp", "types.ts"), "utf8");
-    const dialogsSource = fs.readFileSync(path.join(extensionRoot, "src", "ui", "dialogs.ts"), "utf8");
+    const dialogsSource = readDialogsSource();
     const notificationsSource = fs.readFileSync(path.join(extensionRoot, "src", "handlers", "notifications.ts"), "utf8");
     const provenanceSource = fs.readFileSync(path.join(extensionRoot, "src", "common", "provenanceDisplay.ts"), "utf8");
 
@@ -658,7 +667,7 @@ describe("VSIX release manifest", () => {
     const managementPanelSource = fs.readFileSync(path.join(extensionRoot, "src", "manage", "panel.ts"), "utf8");
     const managementSource = fs.readFileSync(path.join(extensionRoot, "src", "ui", "management.ts"), "utf8");
     const extensionSource = fs.readFileSync(path.join(extensionRoot, "src", "extension.ts"), "utf8");
-    const dialogsSource = fs.readFileSync(path.join(extensionRoot, "src", "ui", "dialogs.ts"), "utf8");
+    const dialogsSource = readDialogsSource();
     const webviewDialogsSource = fs.readFileSync(path.join(extensionRoot, "src", "chat", "webview", "components", "dialogs.ts"), "utf8");
 
     expect(managementPanelSource).toContain("openAgentDialog");
@@ -677,7 +686,7 @@ describe("VSIX release manifest", () => {
 
   it("does not suggest unsupported stdio configs in VSIX MCP tests", () => {
     const managementSource = fs.readFileSync(path.join(extensionRoot, "src", "manage", "panel.ts"), "utf8");
-    const dialogsSource = fs.readFileSync(path.join(extensionRoot, "src", "ui", "dialogs.ts"), "utf8");
+    const dialogsSource = readDialogsSource();
 
     expect(managementSource).toContain("\"transport\": \"http\"");
     expect(managementSource).toContain("mcpHttpOnly");
@@ -725,7 +734,7 @@ describe("VSIX release manifest", () => {
   });
 
   it("localizes high-frequency inline management and image capability notices", () => {
-    const dialogsSource = fs.readFileSync(path.join(extensionRoot, "src", "ui", "dialogs.ts"), "utf8");
+    const dialogsSource = readDialogsSource();
     const panelSource = fs.readFileSync(path.join(extensionRoot, "src", "chat", "panel.ts"), "utf8");
     const appSource = fs.readFileSync(path.join(extensionRoot, "src", "chat", "webview", "app.ts"), "utf8");
     const companionSource = fs.readFileSync(path.join(extensionRoot, "src", "chat", "webview", "components", "companionPanel.ts"), "utf8");
@@ -953,7 +962,7 @@ describe("VSIX release manifest", () => {
   });
 
   it("exposes a shareable support bundle for long-term VSIX/TUI mismatch debugging", () => {
-    const dialogsSource = fs.readFileSync(path.join(extensionRoot, "src", "ui", "dialogs.ts"), "utf8");
+    const dialogsSource = readDialogsSource();
     const extensionSource = fs.readFileSync(path.join(extensionRoot, "src", "extension.ts"), "utf8");
     const actionsSource = fs.readFileSync(path.join(extensionRoot, "src", "handlers", "actions.ts"), "utf8");
     const appSource = fs.readFileSync(path.join(extensionRoot, "src", "chat", "webview", "app.ts"), "utf8");
@@ -1054,7 +1063,7 @@ describe("VSIX release manifest", () => {
 
   it("does not persist stale sessions before restore or manual load succeeds", () => {
     const extensionSource = fs.readFileSync(path.join(extensionRoot, "src", "extension.ts"), "utf8");
-    const dialogsSource = fs.readFileSync(path.join(extensionRoot, "src", "ui", "dialogs.ts"), "utf8");
+    const dialogsSource = readDialogsSource();
     const runtimeSource = fs.readFileSync(path.join(extensionRoot, "src", "state", "runtime.ts"), "utf8");
 
     const restoreLoad = extensionSource.indexOf("await rt.sessionManager.loadSession(rt.currentCwd!, savedState.sessionId, savedState.additionalDirectories)");
@@ -1092,7 +1101,7 @@ describe("VSIX release manifest", () => {
   });
 
   it("keeps Doctor repair actions from silently interrupting running turns", () => {
-    const dialogsSource = fs.readFileSync(path.join(extensionRoot, "src", "ui", "dialogs.ts"), "utf8");
+    const dialogsSource = readDialogsSource();
 
     expect(dialogsSource).toContain("restartAcpFromDoctor");
     expect(dialogsSource).toContain("reloadWindowFromDoctor");
@@ -1113,7 +1122,7 @@ describe("VSIX release manifest", () => {
   });
 
   it("redacts sensitive values from diagnostics and support bundles", () => {
-    const dialogsSource = fs.readFileSync(path.join(extensionRoot, "src", "ui", "dialogs.ts"), "utf8");
+    const dialogsSource = readDialogsSource();
 
     expect(dialogsSource).toContain("SENSITIVE_DIAGNOSTICS_KEY");
     expect(dialogsSource).toContain("redactDiagnosticsValue");
@@ -1130,7 +1139,7 @@ describe("VSIX release manifest", () => {
     const versionSource = fs.readFileSync(path.join(extensionRoot, "src", "common", "version.ts"), "utf8");
     const uiThemeSource = fs.readFileSync(path.join(extensionRoot, "src", "common", "uiTheme.ts"), "utf8");
     const appSource = fs.readFileSync(path.join(extensionRoot, "src", "chat", "webview", "app.ts"), "utf8");
-    const dialogsSource = fs.readFileSync(path.join(extensionRoot, "src", "ui", "dialogs.ts"), "utf8");
+    const dialogsSource = readDialogsSource();
     const themeSource = fs.readFileSync(path.join(extensionRoot, "src", "chat", "webview", "styles", "theme.css"), "utf8");
 
     expect(versionSource).toContain("PACKAGE_VERSION");
@@ -1285,7 +1294,7 @@ describe("VSIX release manifest", () => {
   it("keeps TUI-style #agent quick switching in the VSIX composer", () => {
     const appSource = fs.readFileSync(path.join(extensionRoot, "src", "chat", "webview", "app.ts"), "utf8");
     const actionsSource = fs.readFileSync(path.join(extensionRoot, "src", "handlers", "actions.ts"), "utf8");
-    const dialogsSource = fs.readFileSync(path.join(extensionRoot, "src", "ui", "dialogs.ts"), "utf8");
+    const dialogsSource = readDialogsSource();
 
     expect(appSource).toContain("agentSwitchFromPrompt");
     expect(appSource).toContain("const match = /^[#＃]\\s*(.+)$/s.exec(trimmed)");
@@ -1405,7 +1414,7 @@ describe("VSIX release manifest", () => {
 
   it("keeps TUI-style @file trigger boundaries, including CJK text", () => {
     const appSource = fs.readFileSync(path.join(extensionRoot, "src", "chat", "webview", "app.ts"), "utf8");
-    const dialogsSource = fs.readFileSync(path.join(extensionRoot, "src", "ui", "dialogs.ts"), "utf8");
+    const dialogsSource = readDialogsSource();
 
     expect(appSource).toContain("isFileMentionTriggerText");
     expect(appSource).toContain("isCjkBoundaryChar");
@@ -1435,7 +1444,7 @@ describe("VSIX release manifest", () => {
 
   it("supports Chinese slash-command aliases in the localized VSIX chat", () => {
     const appSource = fs.readFileSync(path.join(extensionRoot, "src", "chat", "webview", "app.ts"), "utf8");
-    const dialogsSource = fs.readFileSync(path.join(extensionRoot, "src", "ui", "dialogs.ts"), "utf8");
+    const dialogsSource = readDialogsSource();
 
     expect(appSource).toContain("zhNames?: string[]");
     expect(appSource).toContain("zhNames: [\"搜索\"]");
@@ -1464,7 +1473,7 @@ describe("VSIX release manifest", () => {
     const panelSource = fs.readFileSync(path.join(extensionRoot, "src", "chat", "panel.ts"), "utf8");
     const appSource = fs.readFileSync(path.join(extensionRoot, "src", "chat", "webview", "app.ts"), "utf8");
     const actionsSource = fs.readFileSync(path.join(extensionRoot, "src", "handlers", "actions.ts"), "utf8");
-    const dialogsSource = fs.readFileSync(path.join(extensionRoot, "src", "ui", "dialogs.ts"), "utf8");
+    const dialogsSource = readDialogsSource();
 
     expect(panelSource).toContain("\"findWorkspaceFile\"");
     expect(panelSource).toContain("\"grepWorkspace\"");
@@ -1522,7 +1531,7 @@ describe("VSIX release manifest", () => {
   it("keeps tool-card file and search-result links truly clickable from nested labels", () => {
     const appSource = fs.readFileSync(path.join(extensionRoot, "src", "chat", "webview", "app.ts"), "utf8");
     const panelSource = fs.readFileSync(path.join(extensionRoot, "src", "chat", "panel.ts"), "utf8");
-    const dialogsSource = fs.readFileSync(path.join(extensionRoot, "src", "ui", "dialogs.ts"), "utf8");
+    const dialogsSource = readDialogsSource();
     const toolCardsSource = fs.readFileSync(path.join(extensionRoot, "src", "chat", "webview", "components", "toolCards.ts"), "utf8");
 
     expect(toolCardsSource).toContain("data-file-path");
@@ -1569,7 +1578,7 @@ describe("VSIX release manifest", () => {
 
   it("keeps terminal shell mode as a workspace-scoped IDE terminal with visible feedback", () => {
     const appSource = fs.readFileSync(path.join(extensionRoot, "src", "chat", "webview", "app.ts"), "utf8");
-    const dialogsSource = fs.readFileSync(path.join(extensionRoot, "src", "ui", "dialogs.ts"), "utf8");
+    const dialogsSource = readDialogsSource();
     const shellPromptSource = fs.readFileSync(path.join(extensionRoot, "src", "chat", "webview", "shellPrompt.ts"), "utf8");
 
     expect(appSource).toContain("shellCommandFromPrompt(text)");
@@ -1613,7 +1622,7 @@ describe("VSIX release manifest", () => {
     const defaultsSource = fs.readFileSync(path.join(extensionRoot, "src", "session", "defaults.ts"), "utf8");
     const extensionSource = fs.readFileSync(path.join(extensionRoot, "src", "extension.ts"), "utf8");
     const actionsSource = fs.readFileSync(path.join(extensionRoot, "src", "handlers", "actions.ts"), "utf8");
-    const dialogsSource = fs.readFileSync(path.join(extensionRoot, "src", "ui", "dialogs.ts"), "utf8");
+    const dialogsSource = readDialogsSource();
     const managementSource = fs.readFileSync(path.join(extensionRoot, "src", "ui", "management.ts"), "utf8");
 
     expect(runtimeSource).toContain("preferredAgentName");
@@ -1665,7 +1674,7 @@ describe("VSIX release manifest", () => {
 
   it("opens independent session tabs without replacing a running session", () => {
     const extensionSource = fs.readFileSync(path.join(extensionRoot, "src", "extension.ts"), "utf8");
-    const dialogsSource = fs.readFileSync(path.join(extensionRoot, "src", "ui", "dialogs.ts"), "utf8");
+    const dialogsSource = readDialogsSource();
     expect(extensionSource).toContain("findSessionRuntime(session.sessionId)");
     expect(extensionSource).toContain("createSessionRuntime(cwd)");
     expect(dialogsSource).toContain("return openSessionTab(session)");
@@ -1675,7 +1684,7 @@ describe("VSIX release manifest", () => {
 
   it("blocks rollback and current-session deletion while a turn is running", () => {
     const extensionSource = fs.readFileSync(path.join(extensionRoot, "src", "extension.ts"), "utf8");
-    const dialogsSource = fs.readFileSync(path.join(extensionRoot, "src", "ui", "dialogs.ts"), "utf8");
+    const dialogsSource = readDialogsSource();
 
     expect(readSource("src/ui/changes.ts")).toContain("manager.state===\"idle\"");
     expect(readSource("src/ui/changes.ts")).toContain("Wait for the current task to finish before rollback.");
@@ -1689,7 +1698,7 @@ describe("VSIX release manifest", () => {
 
   it("blocks active model switching while a turn is running without blocking model management", () => {
     const appSource = fs.readFileSync(path.join(extensionRoot, "src", "chat", "webview", "app.ts"), "utf8");
-    const dialogsSource = fs.readFileSync(path.join(extensionRoot, "src", "ui", "dialogs.ts"), "utf8");
+    const dialogsSource = readDialogsSource();
     const runtimeUtilsSource = fs.readFileSync(path.join(extensionRoot, "src", "common", "runtimeUtils.ts"), "utf8");
     const managementSource = fs.readFileSync(path.join(extensionRoot, "src", "ui", "management.ts"), "utf8");
 
@@ -1728,7 +1737,7 @@ describe("VSIX release manifest", () => {
   });
 
   it("localizes standalone runtime details for parity debugging", () => {
-    const dialogsSource = fs.readFileSync(path.join(extensionRoot, "src", "ui", "dialogs.ts"), "utf8");
+    const dialogsSource = readDialogsSource();
 
     expect(dialogsSource).toContain("# iCode 运行时详情");
     expect(dialogsSource).toContain("iCode CLI 版本");
@@ -1742,7 +1751,7 @@ describe("VSIX release manifest", () => {
   });
 
   it("blocks manual settings reload while a turn is running", () => {
-    const dialogsSource = fs.readFileSync(path.join(extensionRoot, "src", "ui", "dialogs.ts"), "utf8");
+    const dialogsSource = readDialogsSource();
 
     expect(dialogsSource).toContain("SettingsReloadBlocked");
     expect(dialogsSource).toContain("SettingsReloaded");
@@ -1752,7 +1761,7 @@ describe("VSIX release manifest", () => {
   });
 
   it("blocks active profile deletion while preserving non-active profile management", () => {
-    const dialogsSource = fs.readFileSync(path.join(extensionRoot, "src", "ui", "dialogs.ts"), "utf8");
+    const dialogsSource = readDialogsSource();
     const managementSource = fs.readFileSync(path.join(extensionRoot, "src", "ui", "management.ts"), "utf8");
 
     expect(dialogsSource).toContain("isActiveAgentProfile");
@@ -1777,7 +1786,7 @@ describe("VSIX release manifest", () => {
     const defaultsSource = fs.readFileSync(path.join(extensionRoot, "src", "session", "defaults.ts"), "utf8");
     const managementPanelSource = fs.readFileSync(path.join(extensionRoot, "src", "manage", "panel.ts"), "utf8");
     const managementSource = fs.readFileSync(path.join(extensionRoot, "src", "ui", "management.ts"), "utf8");
-    const dialogsSource = fs.readFileSync(path.join(extensionRoot, "src", "ui", "dialogs.ts"), "utf8");
+    const dialogsSource = readDialogsSource();
 
     expect(defaultsSource).toContain("rememberPreferredConfigOption");
     expect(defaultsSource).toContain("default_agent");
@@ -1909,7 +1918,7 @@ describe("VSIX release manifest", () => {
   });
 
   it("keeps workspace changes TUI-visible and blocked while the agent is busy", () => {
-    const dialogsSource = fs.readFileSync(path.join(extensionRoot, "src", "ui", "dialogs.ts"), "utf8");
+    const dialogsSource = readDialogsSource();
     const notificationsSource = fs.readFileSync(path.join(extensionRoot, "src", "handlers", "notifications.ts"), "utf8");
     const appSource = fs.readFileSync(path.join(extensionRoot, "src", "chat", "webview", "app.ts"), "utf8");
 
@@ -1924,7 +1933,7 @@ describe("VSIX release manifest", () => {
 
   it("offers multi-root CWD selection while preserving automatic startup workspace resolution", () => {
     const extensionSource = fs.readFileSync(path.join(extensionRoot, "src", "extension.ts"), "utf8");
-    const dialogsSource = fs.readFileSync(path.join(extensionRoot, "src", "ui", "dialogs.ts"), "utf8");
+    const dialogsSource = readDialogsSource();
     const decisions = fs.readFileSync(path.join(extensionRoot, "DESIGN_DECISIONS.md"), "utf8");
     const checklist = fs.readFileSync(path.join(extensionRoot, "RELEASE_CHECKLIST.md"), "utf8");
     expect(extensionSource).toContain("const resolved = initialWorkspacePath({");
@@ -1939,6 +1948,7 @@ describe("VSIX release manifest", () => {
       "src/extension.ts",
       "src/common/chatPanelState.ts",
       "src/ui/dialogs.ts",
+      ...fs.readdirSync(path.join(extensionRoot, "src", "ui", "dialogs")).map((name) => `src/ui/dialogs/${name}`),
       "src/approval/modal.ts",
       "src/askUser/modal.ts",
       "src/ui/management.ts",
