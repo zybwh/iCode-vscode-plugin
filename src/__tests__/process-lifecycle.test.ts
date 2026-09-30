@@ -13,3 +13,31 @@ it("settles outstanding ACP work when deliberately stopping the backend", async 
     if (manager.state !== "stopped") await manager.stop();
   }
 });
+
+it.skipIf(process.platform !== "win32")("starts a Windows command wrapper with spaces using the production ACP transport", async () => {
+  const fs = await import("node:fs/promises");
+  const path = await import("node:path");
+  const os = await import("node:os");
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "icode cmd fixture "));
+  const manager = new ProcessManager();
+  try {
+    await fs.writeFile(path.join(root, "worker.js"), `
+      require('node:readline').createInterface({ input: process.stdin }).on('line', line => {
+        const request = JSON.parse(line);
+        process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: request.id, result: {
+          protocolVersion: 1, agentInfo: { name: JSON.stringify(process.argv.slice(2)), version: 'test' }
+        } }) + '\\n');
+      });
+      process.stdin.on('end', () => process.exit());
+    `);
+    const launcher = path.join(root, "icode fixture.cmd");
+    await fs.writeFile(launcher, `@echo off\r\n"${process.execPath}" "%~dp0worker.js" %*\r\n`);
+    const args = ["acp", "--workdir", root];
+    const client = await manager.start(launcher, args, root);
+    const result = await client.initialize(1, { name: "test", version: "1" });
+    expect(JSON.parse(result.agentInfo!.name)).toEqual(args);
+  } finally {
+    await manager.stop();
+    await fs.rm(root, { recursive: true, force: true });
+  }
+}, 15000);

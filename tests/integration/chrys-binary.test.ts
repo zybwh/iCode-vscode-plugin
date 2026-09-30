@@ -491,6 +491,8 @@ describe("Packaged runtime startup", () => {
       const { sessionId } = await client.newSession(workspace);
       expect((await client.runtime(sessionId)).sessionId).toBe(sessionId);
       await client.closeSession(sessionId);
+    } catch (error) {
+      throw new Error(`${String(error)}\nRuntime output:\n${manager.recentOutput}`, { cause: error });
     } finally {
       await manager.stop();
       fs.rmSync(workspace, { recursive: true, force: true });

@@ -38,7 +38,9 @@ function spawnChrysProcess(binaryPath: string, args: string[], cwd?: string): Ch
   const env = cleanEnv(process.env);
   if (isWindowsCommandScript(binaryPath)) {
     const command = [quoteCmdArg(binaryPath), ...args.map(quoteCmdArg)].join(" ");
-    return spawn(process.env.ComSpec || "cmd.exe", ["/d", "/s", "/c", command], {
+    return spawn(process.env.ComSpec || "cmd.exe", ["/d", "/s", "/c", `"${command}"`], {
+      // Match Node's cmd.exe shell convention; libuv must not re-escape these quotes.
+      windowsVerbatimArguments: true,
       cwd,
       stdio: ["pipe", "pipe", "pipe"],
       env,
