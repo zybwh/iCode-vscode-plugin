@@ -1,7 +1,8 @@
 import * as fs from "node:fs";
-import * as os from "node:os";
 import * as path from "node:path";
 import { randomInt } from "node:crypto";
+
+import { chrysConfigDir } from "../common/sessionFiles";
 
 import { appraiseCompanion, isValidCompanionCard } from "./appraisal";
 import { applyCompanionGrowthEvent, defaultCompanionGrowth, normalizeCompanionGrowth } from "./growth";
@@ -21,12 +22,6 @@ import type {
 
 const COLLECTION_SCHEMA_VERSION = 1;
 
-function chrysConfigDir(): string {
-  if (process.platform === "win32") {
-    return path.join(process.env.APPDATA || os.homedir(), "chrys");
-  }
-  return path.join(os.homedir(), ".chrys");
-}
 
 function companionRootDir(options: CompanionLoadOptions): string {
   return options.companionRootDir || process.env.CHRYS_COMPANION_ROOT_DIR || path.join(chrysConfigDir(), "companions");

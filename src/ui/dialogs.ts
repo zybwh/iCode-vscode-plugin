@@ -36,15 +36,8 @@ import type {
   ModelSummary,
   DiffEntry,
 } from "../acp/types";
+import { hostUiLanguage as currentUiLanguage, localized as nativeText } from "../common/hostI18n";
 
-function currentUiLanguage() {
-  return resolveUiLanguage(vscode.workspace.getConfiguration("chrys").get<string>("ui.language"), vscode.env.language);
-}
-
-function nativeText(en: string, zh: string): string {
-  const language = currentUiLanguage();
-  return language === "zh-CN" ? zh : en;
-}
 
 function chrysCliVersionLabel(localized = false): string {
   if (rt.chrysCliVersion) return `iCode CLI v${rt.chrysCliVersion}`;
@@ -470,7 +463,7 @@ export async function openRuntimeDialog(activeTabId?: string): Promise<void> {
   if (!panel) return;
   await refreshRuntimeSnapshot();
   if (panel !== rt.chatPanel || sessionManager !== rt.sessionManager) return;
-  const language = resolveUiLanguage(vscode.workspace.getConfiguration("chrys").get<string>("ui.language"), vscode.env.language);
+  const language = currentUiLanguage();
   setTrackedInlineDialogState({
     kind: "runtimeDetails",
     title: nativeText("Runtime Details", "运行时详情"),

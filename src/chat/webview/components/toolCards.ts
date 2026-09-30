@@ -2,7 +2,7 @@ import type { ContentBlock } from "../../../acp/types";
 import type { ChatMessage } from "../../provider";
 import { objectValue, stringField, numberField } from "../../../common/utils";
 import { normalizeToolKind } from "../../../common/toolRendering";
-import { state } from "../state";
+import { state, uiText as toolText } from "../state";
 import { el, formatJson, imageDataUri } from "../helpers";
 import { renderMarkdown } from "../renderer";
 
@@ -60,9 +60,6 @@ export function toolKindLabel(kind: string, toolName = ""): string {
   return state.uiLanguage === "zh-CN" ? (label?.zh ?? "工具") : (label?.en ?? "Tool");
 }
 
-function toolText(en: string, zh: string): string {
-  return state.uiLanguage === "zh-CN" ? zh : en;
-}
 
 function toolStatusLabel(status: string): string {
   if (state.uiLanguage !== "zh-CN") return status;

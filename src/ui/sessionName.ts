@@ -1,15 +1,15 @@
 import * as vscode from "vscode";
 import { rt, sessionRuntimes, withRuntime, findSessionRuntime } from "../state/runtime";
 import { localSessionName, setLocalSessionName, validateSessionName } from "../session/localNames";
-import { resolveUiLanguage } from "../common/i18n";
 import { chatPanelState } from "../common/chatPanelState";
 import { refreshOpenSessionsDialog, refreshSessionsSidebar } from "./dialogs";
+import { hostUiLanguage } from "../common/hostI18n";
 
 /** Editor-local label, never a write to iCode session files or a private ACP method. */
 export async function renameSessionLocally(sessionId = rt.currentSessionId, title?: string, originalTitle?: string): Promise<void> {
   const context = rt.extensionContext;
   if (!context) return;
-  const zh = resolveUiLanguage(vscode.workspace.getConfiguration("chrys").get<string>("ui.language"), vscode.env.language) === "zh-CN";
+  const zh = hostUiLanguage() === "zh-CN";
   if (!sessionId) {
     void vscode.window.showInformationMessage(zh ? "请先创建或打开一个会话。" : "Create or open a session first.");
     return;

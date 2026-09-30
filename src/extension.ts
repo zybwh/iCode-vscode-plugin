@@ -19,9 +19,8 @@ import { AskUserHandler } from "./askUser/modal";
 import { nextMessageId } from "./chat/provider";
 import { SessionTreeProvider } from "./views/sessionTree";
 import { logInfo, logWarn, logError, recordDebugEvent } from "./common/logging";
-import { resolveUiLanguage } from "./common/i18n";
 import { resolveUiTheme } from "./common/uiTheme";
-import { findSessionJsonPath, sessionShortId } from "./common/sessionFiles";
+import { expandHome, findSessionJsonPath, sessionShortId } from "./common/sessionFiles";
 import { chatPanelState } from "./common/chatPanelState";
 import { rt, bindRuntime, currentRuntime, withRuntime, focusRuntime, createSessionRuntime, findSessionRuntime, sessionRuntimes } from "./state/runtime";
 import { applyPreferredDefaultsToNewSession, initializePreferredDefaults, refreshPreferredDefaultsFromSettings, rememberPreferredAgent } from "./session/defaults";
@@ -30,6 +29,14 @@ import { AcpRequestError } from "./acp/protocol";
 import { resetRenderState, refreshRuntimeSnapshot } from "./handlers/notifications";
 import { PACKAGE_VERSION, PROTOCOL_VERSION } from "./common/version";
 import type { SessionInfo } from "./acp/types";
+import { localized as nativeText } from "./common/hostI18n";
+import { relativeSessionTime, sessionMetaLine } from "./common/sessionFormat";
+import { abortPausedSubAgent, changeWorkspace, copySupportBundle, createModelProfile, deleteAgentFromDialog, deleteAgentProfile, deleteModelFromDialog, deleteModelProfile, handleInlineDialogAction, handleSessionsSidebarRequest, loadSavedSession, openAgentDialog, openModelDialog, openToolDiff, openWorkspaceFile, pickLanguageFromList, pickThemeFromList, refreshAgentDialog, refreshModelDialog, reloadChrysSettings, retryPausedSubAgent, rollbackSession, runDoctor, saveAgentFromDialog, saveModelFromDialog, setActiveAgentFromDialog, setActiveModelFromDialog, setApprovalMode, setConfigOption, setModelProfile, showAgentProfiles, showDiagnosticsReport, showModelProfiles, showRuntimeDetails, showSessionDiff, showStructuredHistory, switchActiveAgent, testMcpServer } from "./ui/dialogs";
+import { showManagementPanel } from "./ui/management";
+import { handleCancel, handleSendMessage, handleSleepSkip, handleWebviewCommand } from "./handlers/actions";
+import { renameSessionLocally } from "./ui/sessionName";
+import { showPromptHistory } from "./ui/promptHistory";
+import { installManagedRuntime } from "./ui/runtimeInstall";
 
 export interface ChrysSessionStateEvent {
   sessionState: 'idle' | 'running' | 'cancelling';
@@ -59,10 +66,6 @@ function recordLifecycleEvent(kind: string, detail = ""): void {
   }
 }
 
-function nativeText(en: string, zh: string): string {
-  const language = resolveUiLanguage(vscode.workspace.getConfiguration("chrys").get<string>("ui.language"), vscode.env.language);
-  return language === "zh-CN" ? zh : en;
-}
 
 // ──────────────────────────────────────────────
 // ChrysDiffProvider
@@ -234,14 +237,6 @@ async function resolveChrysBinary(config: vscode.WorkspaceConfiguration, context
 
 function platformBinaryName(): string {
   return process.platform === "win32" ? "chrys.exe" : "chrys";
-}
-
-function expandHome(value: string): string {
-  if (value === "~") return os.homedir();
-  if (value.startsWith(`~${path.sep}`) || value.startsWith("~/")) {
-    return path.join(os.homedir(), value.slice(2));
-  }
-  return value;
 }
 
 async function executablePath(candidate: string): Promise<string | null> {
@@ -484,125 +479,65 @@ export function ensureChatPanel(context: vscode.ExtensionContext, preserveFocus 
     rt.cancelIdleRelease();
     const panel = rt.chatPanel = new ChatPanel(context, preserveFocus);
 
-    // Lazily import action handlers to avoid circular deps
-    const initActions = async () => {
-      const { handleSendMessage, handleCancel, handleWebviewCommand } = await import("./handlers/actions");
-      if (rt.chatPanel !== panel) return;
-      panel.onSendMessage((text, blocks) => {
-        void handleSendMessage(text, blocks).catch((error) => logError(`Send message failed: ${String(error)}`));
-      });
-      panel.onCancel(() => {
-        void handleCancel().catch((error) => logError(`Cancel failed: ${String(error)}`));
-      });
-      panel.onCommand((command, arg) => {
-        handleWebviewCommand(command, arg).catch((error) => {
-          const message = error instanceof Error ? error.message : String(error);
-          logError(`Webview command failed (${command}): ${message}`);
-        });
-      });
+    const logFailure = (label: string) => (error: unknown) => {
+      logError(`${label} failed: ${error instanceof Error ? error.message : String(error)}`);
     };
-    initActions().catch((error) => {
-      logError(`Action handler initialization failed: ${error instanceof Error ? error.message : String(error)}`);
+    panel.onSendMessage((text, blocks) => {
+      handleSendMessage(text, blocks).catch(logFailure("Send message"));
     });
-
-    rt.chatPanel.onSessionsSidebarRequest((action, payload) => {
-      import("./ui/dialogs").then(({ handleSessionsSidebarRequest }) => handleSessionsSidebarRequest(action, payload)).catch((error) => logError(String(error)));
+    panel.onCancel(() => {
+      handleCancel().catch(logFailure("Cancel"));
     });
-
-    rt.chatPanel.onSleepSkip((toolCallId) => {
-      import("./handlers/actions").then(({ handleSleepSkip }) => {
-        handleSleepSkip(toolCallId).catch(() => {});
-      });
+    panel.onCommand((command, arg) => {
+      handleWebviewCommand(command, arg).catch(logFailure(`Webview command (${command})`));
     });
-
-    rt.chatPanel.onInlineDialogAction((action, payload) => {
-      import("./ui/dialogs").then(({ handleInlineDialogAction }) => {
-        handleInlineDialogAction(action, payload).catch((error) => {
-          const message = error instanceof Error ? error.message : String(error);
-          logError(`Inline dialog action failed: ${message}`);
-        });
-      });
+    panel.onSessionsSidebarRequest((action, payload) => {
+      handleSessionsSidebarRequest(action, payload).catch(logFailure("Sessions sidebar request"));
     });
-
-
-    rt.chatPanel.onToolDiff((toolCallId: string) => {
-      import("./ui/dialogs").then(({ openToolDiff: openToolDiffFn }) => {
-        openToolDiffFn(toolCallId).catch(() => {});
-      });
+    panel.onSleepSkip((toolCallId) => {
+      handleSleepSkip(toolCallId).catch(logFailure("Sleep skip"));
     });
-
-    rt.chatPanel.onModelDialogSave((model) => {
-      import("./ui/dialogs").then(({ saveModelFromDialog }) => {
-        saveModelFromDialog(model).catch(() => {});
-      });
+    panel.onInlineDialogAction((action, payload) => {
+      handleInlineDialogAction(action, payload).catch(logFailure("Inline dialog action"));
     });
-
-    rt.chatPanel.onModelDialogDelete((id) => {
-      import("./ui/dialogs").then(({ deleteModelFromDialog }) => {
-        deleteModelFromDialog(id).catch(() => {});
-      });
+    panel.onToolDiff((toolCallId: string) => {
+      openToolDiff(toolCallId).catch(logFailure("Open tool diff"));
     });
-
-    rt.chatPanel.onModelDialogSetActive((id) => {
-      import("./ui/dialogs").then(({ setActiveModelFromDialog }) => {
-        setActiveModelFromDialog(id).catch(() => {});
-      });
+    panel.onModelDialogSave((model) => {
+      saveModelFromDialog(model).catch(logFailure("Save model"));
     });
-
-    rt.chatPanel.onApprovalModeSelect((mode) => {
-      import("./ui/dialogs").then(({ setApprovalMode }) => {
-        setApprovalMode(mode).catch((error) => {
-          const message = error instanceof Error ? error.message : String(error);
-          logError(`Approval mode select failed: ${message}`);
-        });
-      });
+    panel.onModelDialogDelete((id) => {
+      deleteModelFromDialog(id).catch(logFailure("Delete model"));
     });
-
-    rt.chatPanel.onApprovalDialogDecision((optionId, reason) => {
+    panel.onModelDialogSetActive((id) => {
+      setActiveModelFromDialog(id).catch(logFailure("Set active model"));
+    });
+    panel.onApprovalModeSelect((mode) => {
+      setApprovalMode(mode).catch(logFailure("Approval mode select"));
+    });
+    panel.onApprovalDialogDecision((optionId, reason) => {
       rt.approvalHandler?.resolve(optionId, reason);
     });
-
-    rt.chatPanel.onAskUserDialogResponse((requestId, answers, cancelled, source) => {
+    panel.onAskUserDialogResponse((requestId, answers, cancelled, source) => {
       rt.askUserHandler?.resolve(requestId, answers, cancelled, source);
     });
-
-    rt.chatPanel.onOpenFile((filePath, line) => {
-      import("./ui/dialogs").then(({ openWorkspaceFile }) => {
-        openWorkspaceFile(filePath, line).catch((error) => {
-          const message = error instanceof Error ? error.message : String(error);
-          logError(`Open file failed: ${message}`);
-        });
-      });
+    panel.onOpenFile((filePath, line) => {
+      openWorkspaceFile(filePath, line).catch(logFailure("Open file"));
     });
-
-    rt.chatPanel.onModelDialogRefresh(() => {
-      import("./ui/dialogs").then(({ refreshModelDialog }) => {
-        refreshModelDialog().catch(() => {});
-      });
+    panel.onModelDialogRefresh(() => {
+      refreshModelDialog().catch(logFailure("Refresh model dialog"));
     });
-
-    rt.chatPanel.onAgentDialogSave((agent) => {
-      import("./ui/dialogs").then(({ saveAgentFromDialog }) => {
-        saveAgentFromDialog(agent).catch(() => {});
-      });
+    panel.onAgentDialogSave((agent) => {
+      saveAgentFromDialog(agent).catch(logFailure("Save agent"));
     });
-
-    rt.chatPanel.onAgentDialogDelete((name) => {
-      import("./ui/dialogs").then(({ deleteAgentFromDialog }) => {
-        deleteAgentFromDialog(name).catch(() => {});
-      });
+    panel.onAgentDialogDelete((name) => {
+      deleteAgentFromDialog(name).catch(logFailure("Delete agent"));
     });
-
-    rt.chatPanel.onAgentDialogSetActive((name) => {
-      import("./ui/dialogs").then(({ setActiveAgentFromDialog }) => {
-        setActiveAgentFromDialog(name).catch(() => {});
-      });
+    panel.onAgentDialogSetActive((name) => {
+      setActiveAgentFromDialog(name).catch(logFailure("Set active agent"));
     });
-
-    rt.chatPanel.onAgentDialogRefresh(() => {
-      import("./ui/dialogs").then(({ refreshAgentDialog }) => {
-        refreshAgentDialog().catch(() => {});
-      });
+    panel.onAgentDialogRefresh(() => {
+      refreshAgentDialog().catch(logFailure("Refresh agent dialog"));
     });
   }
   rt.chatPanel.setState(chatPanelState());
@@ -688,12 +623,10 @@ function registerCommands(context: vscode.ExtensionContext): void {
   context.subscriptions.push(registerSessionCommand("chrys.renameSession", async (
     item?: { sessionInfo?: SessionInfo },
   ) => {
-    const { renameSessionLocally } = await import("./ui/sessionName");
     await renameSessionLocally(item?.sessionInfo?.sessionId ?? rt.currentSessionId, undefined, item?.sessionInfo?.title);
   }));
 
   context.subscriptions.push(registerSessionCommand("chrys.showPromptHistory", async () => {
-    const { showPromptHistory } = await import("./ui/promptHistory");
     ensureChatPanel(context).reveal();
     await showPromptHistory();
   }));
@@ -754,8 +687,6 @@ function registerCommands(context: vscode.ExtensionContext): void {
       matchOnDetail: true,
     });
     if (!selected) return;
-
-    const { loadSavedSession } = await import("./ui/dialogs");
     await loadSavedSession({ sessionId: selected.sessionId, cwd: selected.cwd });
   }));
 
@@ -781,7 +712,6 @@ function registerCommands(context: vscode.ExtensionContext): void {
       rt.activeAgentName = args.agent;
     }
     ensureChatPanel(rt.extensionContext).reveal();
-    const { handleSendMessage } = await import("./handlers/actions");
     await handleSendMessage(args.text, [{ type: "text", text: args.text }]);
     rt.chatPanel?.setState(chatPanelState());
   }));
@@ -790,144 +720,46 @@ function registerCommands(context: vscode.ExtensionContext): void {
     rt.outputChannel?.show();
   }));
 
-  context.subscriptions.push(registerSessionCommand("chrys.runtimeDetails", async () => {
-    const { showRuntimeDetails } = await import("./ui/dialogs");
-    await showRuntimeDetails();
-  }));
-
-  context.subscriptions.push(registerSessionCommand("chrys.showDiff", async () => {
-    const { showSessionDiff } = await import("./ui/dialogs");
-    await showSessionDiff();
-  }));
-
-  context.subscriptions.push(registerSessionCommand("chrys.rollback", async () => {
-    const { rollbackSession } = await import("./ui/dialogs");
-    await rollbackSession();
-  }));
-
-  context.subscriptions.push(registerSessionCommand("chrys.retrySubAgent", async () => {
-    const { retryPausedSubAgent } = await import("./ui/dialogs");
-    await retryPausedSubAgent();
-  }));
-
-  context.subscriptions.push(registerSessionCommand("chrys.abortSubAgent", async () => {
-    const { abortPausedSubAgent } = await import("./ui/dialogs");
-    await abortPausedSubAgent();
-  }));
-
-  context.subscriptions.push(registerSessionCommand("chrys.setApprovalMode", async () => {
-    const { setApprovalMode } = await import("./ui/dialogs");
-    await setApprovalMode();
-  }));
-
-  context.subscriptions.push(registerSessionCommand("chrys.switchAgent", async () => {
-    const { switchActiveAgent } = await import("./ui/dialogs");
-    await switchActiveAgent();
-  }));
-
-  context.subscriptions.push(registerSessionCommand("chrys.showAgentProfiles", async () => {
-    const { showAgentProfiles } = await import("./ui/dialogs");
-    await showAgentProfiles();
-  }));
-
-  context.subscriptions.push(registerSessionCommand("chrys.showModelProfiles", async () => {
-    const { showModelProfiles } = await import("./ui/dialogs");
-    await showModelProfiles();
-  }));
-
-  context.subscriptions.push(registerSessionCommand("chrys.reloadSettings", async () => {
-    const { reloadChrysSettings } = await import("./ui/dialogs");
-    await reloadChrysSettings();
-  }));
-
-  context.subscriptions.push(registerSessionCommand("chrys.changeWorkspace", async () => {
-    const { changeWorkspace } = await import("./ui/dialogs");
-    await changeWorkspace();
-  }));
-
-  context.subscriptions.push(registerSessionCommand("chrys.showStructuredHistory", async () => {
-    const { showStructuredHistory } = await import("./ui/dialogs");
-    await showStructuredHistory();
-  }));
-
-  context.subscriptions.push(registerSessionCommand("chrys.setModelProfile", async () => {
-    const { setModelProfile } = await import("./ui/dialogs");
-    await setModelProfile();
-  }));
-
-  context.subscriptions.push(registerSessionCommand("chrys.createModelProfile", async () => {
-    const { createModelProfile } = await import("./ui/dialogs");
-    await createModelProfile();
-  }));
-
-  context.subscriptions.push(registerSessionCommand("chrys.deleteModelProfile", async () => {
-    const { deleteModelProfile } = await import("./ui/dialogs");
-    await deleteModelProfile();
-  }));
-
-  context.subscriptions.push(registerSessionCommand("chrys.deleteAgentProfile", async () => {
-    const { deleteAgentProfile } = await import("./ui/dialogs");
-    await deleteAgentProfile();
-  }));
-
-  context.subscriptions.push(registerSessionCommand("chrys.testMcpServer", async () => {
-    const { testMcpServer } = await import("./ui/dialogs");
-    await testMcpServer();
-  }));
-
-  context.subscriptions.push(registerSessionCommand("chrys.setConfigOption", async () => {
-    const { setConfigOption } = await import("./ui/dialogs");
-    await setConfigOption();
-  }));
-
-  context.subscriptions.push(registerSessionCommand("chrys.manage", async () => {
-    const { showManagementPanel } = await import("./ui/management");
-    await showManagementPanel();
-  }));
-
-  context.subscriptions.push(registerSessionCommand("chrys.manageModels", async () => {
-    const { openModelDialog } = await import("./ui/dialogs");
-    await openModelDialog();
-  }));
-
-  context.subscriptions.push(registerSessionCommand("chrys.manageAgents", async () => {
-    const { openAgentDialog } = await import("./ui/dialogs");
-    await openAgentDialog();
-  }));
-
-  context.subscriptions.push(registerSessionCommand("chrys.pickTheme", async () => {
-    const { pickThemeFromList } = await import("./ui/dialogs");
-    await pickThemeFromList();
-  }));
-
-  context.subscriptions.push(registerSessionCommand("chrys.pickLanguage", async () => {
-    const { pickLanguageFromList } = await import("./ui/dialogs");
-    await pickLanguageFromList();
-  }));
+  // Commands that open a dialog or picker without arguments.
+  const dialogCommands: Array<[string, () => Promise<unknown>]> = [
+    ["chrys.runtimeDetails", showRuntimeDetails],
+    ["chrys.showDiff", showSessionDiff],
+    ["chrys.rollback", rollbackSession],
+    ["chrys.retrySubAgent", retryPausedSubAgent],
+    ["chrys.abortSubAgent", abortPausedSubAgent],
+    ["chrys.setApprovalMode", setApprovalMode],
+    ["chrys.switchAgent", switchActiveAgent],
+    ["chrys.showAgentProfiles", showAgentProfiles],
+    ["chrys.showModelProfiles", showModelProfiles],
+    ["chrys.reloadSettings", reloadChrysSettings],
+    ["chrys.changeWorkspace", changeWorkspace],
+    ["chrys.showStructuredHistory", showStructuredHistory],
+    ["chrys.setModelProfile", setModelProfile],
+    ["chrys.createModelProfile", createModelProfile],
+    ["chrys.deleteModelProfile", deleteModelProfile],
+    ["chrys.deleteAgentProfile", deleteAgentProfile],
+    ["chrys.testMcpServer", testMcpServer],
+    ["chrys.setConfigOption", setConfigOption],
+    ["chrys.manage", showManagementPanel],
+    ["chrys.manageModels", openModelDialog],
+    ["chrys.manageAgents", openAgentDialog],
+    ["chrys.pickTheme", pickThemeFromList],
+    ["chrys.pickLanguage", pickLanguageFromList],
+    ["chrys.diagnostics", showDiagnosticsReport],
+    ["chrys.copySupportBundle", copySupportBundle],
+    ["chrys.doctor", runDoctor],
+  ];
+  for (const [command, run] of dialogCommands) {
+    context.subscriptions.push(registerSessionCommand(command, () => run()));
+  }
 
   context.subscriptions.push(registerSessionCommand("chrys.showNotifications", () => {
     if (!rt.extensionContext) return;
     ensureChatPanel(rt.extensionContext).showNotifications();
   }));
 
-  context.subscriptions.push(registerSessionCommand("chrys.diagnostics", async () => {
-    const { showDiagnosticsReport } = await import("./ui/dialogs");
-    await showDiagnosticsReport();
-  }));
-
-  context.subscriptions.push(registerSessionCommand("chrys.copySupportBundle", async () => {
-    const { copySupportBundle } = await import("./ui/dialogs");
-    await copySupportBundle();
-  }));
-
-  context.subscriptions.push(registerSessionCommand("chrys.doctor", async () => {
-    const { runDoctor } = await import("./ui/dialogs");
-    await runDoctor();
-  }));
-
   context.subscriptions.push(registerSessionCommand("chrys.loadSessionFromTree", async (sessionId: string, sessionCwd?: string) => {
     if (!sessionId) return;
-    const { loadSavedSession } = await import("./ui/dialogs");
     await loadSavedSession({ sessionId, cwd: sessionCwd || "" });
   }));
 
@@ -1212,52 +1044,6 @@ function sessionQuickPickItem(session: SessionInfo): SessionQuickPickItem {
   };
 }
 
-function sessionMetaLine(session: SessionInfo): string {
-  const meta = session._meta ?? {};
-  const messageCount = numberMeta(meta, "message_count") ?? numberMeta(meta, "messageCount");
-  return [
-    stringMeta(meta, "agentDisplayName") ?? stringMeta(meta, "agentProfile") ?? stringMeta(meta, "agent_profile") ?? stringMeta(meta, "agent") ?? stringMeta(meta, "profile"),
-    stringMeta(meta, "modelProfile") ?? stringMeta(meta, "model_profile") ?? stringMeta(meta, "model"),
-    messageCount !== undefined ? nativeText(`${messageCount} messages`, `${messageCount} 条消息`) : undefined,
-    stringMeta(meta, "sessionSizeHuman"),
-  ].filter((value): value is string => Boolean(value)).join(" · ");
-}
-
-function stringMeta(meta: Record<string, unknown>, key: string): string | undefined {
-  const value = meta[key];
-  return typeof value === "string" && value ? value : undefined;
-}
-
-function numberMeta(meta: Record<string, unknown>, key: string): number | undefined {
-  const value = meta[key];
-  return typeof value === "number" ? value : undefined;
-}
-
-function relativeSessionTime(iso: string): string {
-  const timestamp = new Date(iso).getTime();
-  if (!Number.isFinite(timestamp)) return iso;
-  const seconds = Math.max(0, Math.floor((Date.now() - timestamp) / 1000));
-  const language = resolveUiLanguage(vscode.workspace.getConfiguration("chrys").get<string>("ui.language"), vscode.env.language);
-  if (language === "zh-CN") {
-    if (seconds < 60) return "刚刚";
-    const minutes = Math.floor(seconds / 60);
-    if (minutes < 60) return `${minutes} 分钟前`;
-    const hours = Math.floor(minutes / 60);
-    if (hours < 24) return `${hours} 小时前`;
-    const days = Math.floor(hours / 24);
-    if (days < 30) return `${days} 天前`;
-    return new Date(iso).toLocaleDateString("zh-CN");
-  }
-  if (seconds < 60) return "just now";
-  const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) return `${minutes}m ago`;
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours}h ago`;
-  const days = Math.floor(hours / 24);
-  if (days < 30) return `${days}d ago`;
-  return new Date(iso).toLocaleDateString();
-}
-
 // ──────────────────────────────────────────────
 // Deactivate
 // ──────────────────────────────────────────────
@@ -1331,6 +1117,18 @@ function registerConfigurationListener(context: vscode.ExtensionContext): void {
   );
 }
 
+function clearSessionManager(): void {
+  (rt as { sessionManager: SessionManager | undefined }).sessionManager = undefined;
+}
+
+/** Settle pending approval/ask-user requests, stop the ACP process and drop its session manager. */
+async function teardownBackend(reason: string): Promise<void> {
+  rt.approvalHandler?.resolve();
+  rt.askUserHandler?.cancelActive(reason);
+  if (rt.processManager && rt.processManager.state !== "stopped") await rt.processManager.stop();
+  clearSessionManager();
+}
+
 async function connectBackend(context: vscode.ExtensionContext, binaryOverride?: string): Promise<boolean> {
   if (rt.connectionInitialization) return rt.connectionInitialization;
   const operation = connectBackendOnce(context, binaryOverride);
@@ -1352,12 +1150,7 @@ export function restartBackendConnection(
 async function restartRuntimeConnection(context: vscode.ExtensionContext, binaryOverride?: string): Promise<boolean> {
   if (rt.connectionInitialization) await rt.connectionInitialization;
   rt.clearRestartTimer();
-  rt.approvalHandler?.resolve();
-  rt.askUserHandler?.cancelActive("backend-restarting");
-  if (rt.processManager && rt.processManager.state !== "stopped") {
-    await rt.processManager.stop();
-  }
-  (rt as { sessionManager: SessionManager | undefined }).sessionManager = undefined;
+  await teardownBackend("backend-restarting");
   return connectBackend(context, binaryOverride);
 }
 
@@ -1401,7 +1194,7 @@ async function connectBackendOnce(context: vscode.ExtensionContext, binaryOverri
     setConnectionState("error", message);
     await handleAcpInitializeFailure(error);
     if (rt.processManager.state === "running") await rt.processManager.stop();
-    (rt as { sessionManager: SessionManager | undefined }).sessionManager = undefined;
+    clearSessionManager();
     return false;
   }
 }
@@ -1427,7 +1220,7 @@ function createProcessManager(context: vscode.ExtensionContext): ProcessManager 
     rt.approvalHandler?.resolve();
     rt.askUserHandler?.cancelActive("backend-disconnected");
     rt.persistCurrentSession();
-    (rt as { sessionManager: SessionManager | undefined }).sessionManager = undefined;
+    clearSessionManager();
     setConnectionState("disconnected", String(reason));
     rt.chatPanel?.showReconnectNotice();
     // An exit during initialize is reported by connectBackendOnce; restarting here too
@@ -1444,16 +1237,12 @@ async function reconnectBackend(context: vscode.ExtensionContext): Promise<void>
   if (configured && rt.currentBinaryPath === expandHome(configured) && rt.processManager?.state === "running" && rt.sessionManager) {
     return;
   }
-  rt.approvalHandler?.resolve();
-  rt.askUserHandler?.cancelActive("backend-restarting");
-  if (rt.processManager && rt.processManager.state !== "stopped") await rt.processManager.stop();
-  (rt as { sessionManager: SessionManager | undefined }).sessionManager = undefined;
+  await teardownBackend("backend-restarting");
   rt.currentBinaryPath = null;
   if (!(await connectBackend(context))) await offerBackendSetup(context);
 }
 
 async function installBackendRuntime(context: vscode.ExtensionContext): Promise<void> {
-  const { installManagedRuntime } = await import("./ui/runtimeInstall");
   const installed = await installManagedRuntime(context);
   if (!installed) return;
   // Installing never interrupts a conversation, approvals or another tab's runtime.

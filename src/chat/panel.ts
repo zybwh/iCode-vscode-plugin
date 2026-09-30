@@ -5,13 +5,14 @@ import { randomBytes } from "node:crypto";
 import type { ChatMessage } from "./provider";
 import type { ContentBlock, ModelSummary, PermissionOption, PlanEntry, ProfileSummary, RequestInputAnswer, RequestInputQuestion, SessionInfo } from "../acp/types";
 import { rt, bindRuntime, currentRuntime, focusRuntime, scheduleIdleRuntimeRelease } from "../state/runtime";
-import { resolveUiLanguage, type UiLanguage } from "../common/i18n";
+import type { UiLanguage } from "../common/i18n";
 import type { UiBrand } from "../common/uiBrand";
 import type { UiTheme } from "../common/uiTheme";
 import { logError, recordDebugEvent } from "../common/logging";
 import { runtimeVisionEnabled } from "../common/runtimeUtils";
 import { ReadyMessageQueue } from "./readyMessageQueue";
 import type { ChatConnectionState } from "./webview/connectionPresentation";
+import { hostUiLanguage, localized as panelText } from "../common/hostI18n";
 
 /** Changes once per extension-host start so rebuilt bundles are not served from cache. */
 const WEBVIEW_ASSET_VERSION = Date.now().toString(36);
@@ -839,7 +840,7 @@ export class ChatPanel {
     const styleUri = webview.asWebviewUri(vscode.Uri.joinPath(context.extensionUri, "dist", "theme.css")).with({ query: WEBVIEW_ASSET_VERSION });
     const diagramUri = webview.asWebviewUri(vscode.Uri.joinPath(context.extensionUri, "dist", "diagrams.js")).with({ query: WEBVIEW_ASSET_VERSION });
     const nonce = randomBytes(16).toString("base64");
-    const language = resolveUiLanguage(vscode.workspace.getConfiguration("chrys").get<string>("ui.language"), vscode.env.language);
+    const language = hostUiLanguage();
     const csp = [
       "default-src 'none'",
       `style-src ${webview.cspSource}`,
@@ -866,10 +867,6 @@ export class ChatPanel {
   }
 }
 
-function panelText(en: string, zh: string): string {
-  const language = resolveUiLanguage(vscode.workspace.getConfiguration("chrys").get<string>("ui.language"), vscode.env.language);
-  return language === "zh-CN" ? zh : en;
-}
 
 function formatWebviewError(error: { message: string; source?: string; lineno?: number; colno?: number; stack?: string }): string {
   const location = error.source ? ` (${error.source}:${error.lineno ?? 0}:${error.colno ?? 0})` : "";

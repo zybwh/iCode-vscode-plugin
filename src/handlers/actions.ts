@@ -7,7 +7,6 @@ import { logInfo, logWarn, logError } from "../common/logging";
 import { chatPanelState } from "../common/chatPanelState";
 import { applyPreferredDefaultsToNewSession } from "../session/defaults";
 import { awardCompanionActiveMinutes, awardCompanionUsageEvent, handleCompanionCommand, handleCompanionDirectAddress } from "./companion";
-import { resolveUiLanguage } from "../common/i18n";
 import {
   openSessionsDialog,
   openAgentsDialog,
@@ -45,6 +44,7 @@ import {
 import { showManagementPanel } from "../ui/management";
 import type { ContentBlock } from "../acp/types";
 import type { ChatCommand } from "../chat/panel";
+import { localized as uiText } from "../common/hostI18n";
 
 // ──────────────────────────────────────────────
 // Send message
@@ -493,10 +493,6 @@ export async function handleSleepSkip(toolCallId: string): Promise<void> {
   rt.chatPanel?.appendDebugEvent("SleepSkip", toolCallId);
 }
 
-function uiText(en: string, zh: string): string {
-  const language = resolveUiLanguage(vscode.workspace.getConfiguration("chrys").get<string>("ui.language"), vscode.env.language);
-  return language === "zh-CN" ? zh : en;
-}
 
 async function showActionUnavailable(eventName: string, actionName: string, message: string): Promise<void> {
   rt.chatPanel?.appendDebugEvent(eventName, actionName);

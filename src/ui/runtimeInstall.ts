@@ -1,7 +1,7 @@
 import * as vscode from "vscode";
 import { installRuntime, RUNTIME_VERSION, runtimeTarget, type InstallStage } from "../runtime/install";
-import { resolveUiLanguage } from "../common/i18n";
 import { logError } from "../common/logging";
+import { hostUiLanguage } from "../common/hostI18n";
 let installing: Promise<string | undefined> | undefined;
 export function installManagedRuntime(context: vscode.ExtensionContext): Promise<string | undefined> {
     if (installing)
@@ -10,7 +10,7 @@ export function installManagedRuntime(context: vscode.ExtensionContext): Promise
     return installing;
 }
 async function runInstall(context: vscode.ExtensionContext): Promise<string | undefined> {
-    const zh = resolveUiLanguage(vscode.workspace.getConfiguration("chrys").get<string>("ui.language"), vscode.env.language) === "zh-CN";
+    const zh = hostUiLanguage() === "zh-CN";
     const t = (en: string, cn: string) => zh ? cn : en;
     try {
         const target = runtimeTarget();

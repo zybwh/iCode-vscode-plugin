@@ -1,14 +1,13 @@
 import type { ChatMessage } from "../chat/provider";
 import type { RuntimeUpdateMessage } from "../acp/types";
 import { mergeRuntimeSnapshot } from "../common/runtimeSnapshot";
-import * as vscode from "vscode";
 import { rt } from "../state/runtime";
 import { nextMessageId } from "../chat/provider";
 import { formatCount } from "../common/utils";
 import { logInfo, logWarn, logError } from "../common/logging";
 import { chatPanelState } from "../common/chatPanelState";
 import { formatRollbackResultMessage } from "../common/provenanceDisplay";
-import { resolveUiLanguage, type UiLanguage } from "../common/i18n";
+import { type UiLanguage } from "../common/i18n";
 import type {
   RuntimeSnapshot,
   ChrysErrorNotification,
@@ -27,6 +26,7 @@ import type {
   SubAgentNotification,
   CompactionNotification,
 } from "../acp/types";
+import { hostUiLanguage } from "../common/hostI18n";
 
 // Re-export pure runtime utility functions
 export {
@@ -57,7 +57,7 @@ export {
 // ──────────────────────────────────────────────
 
 function currentUiLanguage() {
-  return resolveUiLanguage(vscode.workspace.getConfiguration("chrys").get<string>("ui.language"), vscode.env.language);
+  return hostUiLanguage();
 }
 
 export function handleRuntimeUpdate(update: RuntimeUpdateMessage): void {

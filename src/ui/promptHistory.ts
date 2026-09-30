@@ -1,13 +1,13 @@
 import * as vscode from "vscode";
 import { rt } from "../state/runtime";
 import { promptHistory } from "../session/promptHistory";
-import { resolveUiLanguage } from "../common/i18n";
+import { hostUiLanguage } from "../common/hostI18n";
 
 export async function showPromptHistory(): Promise<void> {
   const storage = rt.extensionContext?.workspaceState;
   const panel = rt.chatPanel;
   if (!storage || !panel || !rt.currentCwd) return;
-  const zh = resolveUiLanguage(vscode.workspace.getConfiguration("chrys").get<string>("ui.language"), vscode.env.language) === "zh-CN";
+  const zh = hostUiLanguage() === "zh-CN";
   const history = promptHistory(storage, rt.currentCwd);
   if (!history.length) {
     void vscode.window.showInformationMessage(zh ? "此工作目录暂无历史输入。发送提示词后可在这里检索。" : "No prompt history for this directory yet. Sent prompts will appear here.");

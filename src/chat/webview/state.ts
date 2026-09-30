@@ -73,6 +73,11 @@ export const state = {
 // State mutation helpers
 // ──────────────────────────────────────────────
 
+/** Pick the English or Simplified Chinese variant for the webview's current language. */
+export function uiText(en: string, zh: string): string {
+  return state.uiLanguage === "zh-CN" ? zh : en;
+}
+
 export function recordPromptHistory(text: string): void {
   const value = text.trim();
   if (!value) return;

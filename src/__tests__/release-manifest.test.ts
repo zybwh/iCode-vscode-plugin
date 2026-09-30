@@ -670,7 +670,7 @@ describe("VSIX release manifest", () => {
     expect(managementSource).toContain("onOpenAgentDialog");
     expect(managementSource).toContain("onOpenModelDialog");
     expect(extensionSource).toContain("chrys.manageModels");
-    expect(extensionSource).toContain("await openModelDialog()");
+    expect(extensionSource).toContain("[\"chrys.manageModels\", openModelDialog]");
     expect(dialogsSource).toContain("openModelDialog(\"__new__\")");
     expect(webviewDialogsSource).toContain("dialogState.selectedModelId");
   });
@@ -686,7 +686,8 @@ describe("VSIX release manifest", () => {
   });
 
   it("surfaces list-session failures instead of silently returning", () => {
-    const source = fs.readFileSync(path.join(extensionRoot, "src", "extension.ts"), "utf8");
+    const source = fs.readFileSync(path.join(extensionRoot, "src", "extension.ts"), "utf8")
+      + readSource("src", "common", "sessionFormat.ts");
 
     expect(source).toContain("ListSessionsUnavailable");
     expect(source).toContain("ListSessionsFailed");

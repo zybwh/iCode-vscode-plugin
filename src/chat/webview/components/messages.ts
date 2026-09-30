@@ -1,5 +1,5 @@
 import type { ChatMessage } from "../../provider";
-import { state } from "../state";
+import { state, uiText as messageText } from "../state";
 import { el, formatTime, formatDurationMs, imageDataUri } from "../helpers";
 import { renderMarkdown } from "../renderer";
 import { processThinkTags } from "../thinkTags";
@@ -7,9 +7,6 @@ import { renderToolCall, effectiveToolStatus, normalizeToolKind, toolKindLabel }
 import { updateStatusBar } from "./statusBar";
 import type { ToolGroupState } from "../state";
 
-function messageText(en: string, zh: string): string {
-  return state.uiLanguage === "zh-CN" ? zh : en;
-}
 
 export function isToolMessage(msg: ChatMessage): boolean {
   return msg.kind === "tool_call" || msg.kind === "tool_result";
