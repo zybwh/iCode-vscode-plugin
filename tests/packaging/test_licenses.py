@@ -26,9 +26,10 @@ class LicensePackagingTests(unittest.TestCase):
         shutil.copytree(ROOT / "licenses", self.root / "licenses")
         (self.root / "dist").mkdir()
         for bundle, inputs in [("extension.js", {}), ("webview.js", {
-            "node_modules/beautiful-mermaid/src/ascii/index.ts": {},
             "node_modules/marked/lib/marked.esm.js": {},
             "node_modules/dompurify/dist/purify.es.mjs": {},
+        }), ("diagrams.js", {
+            "node_modules/beautiful-mermaid/src/ascii/index.ts": {},
         })]:
             (self.root / "dist" / bundle).write_text("// packaging fixture\n")
             (self.root / "dist" / f"{bundle}.meta.json").write_text(json.dumps({"inputs": inputs}))

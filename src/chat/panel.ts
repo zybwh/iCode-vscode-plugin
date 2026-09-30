@@ -837,6 +837,7 @@ export class ChatPanel {
     const webview = this.panel.webview;
     const scriptUri = webview.asWebviewUri(vscode.Uri.joinPath(context.extensionUri, "dist", "webview.js")).with({ query: WEBVIEW_ASSET_VERSION });
     const styleUri = webview.asWebviewUri(vscode.Uri.joinPath(context.extensionUri, "dist", "theme.css")).with({ query: WEBVIEW_ASSET_VERSION });
+    const diagramUri = webview.asWebviewUri(vscode.Uri.joinPath(context.extensionUri, "dist", "diagrams.js")).with({ query: WEBVIEW_ASSET_VERSION });
     const nonce = randomBytes(16).toString("base64");
     const language = resolveUiLanguage(vscode.workspace.getConfiguration("chrys").get<string>("ui.language"), vscode.env.language);
     const csp = [
@@ -858,7 +859,7 @@ export class ChatPanel {
   <title>iCode Chat</title>
 </head>
 <body>
-  <div id="app" data-ui-language="${language}"></div>
+  <div id="app" data-ui-language="${language}" data-diagram-script="${diagramUri}"></div>
   <script nonce="${nonce}" src="${scriptUri}"></script>
 </body>
 </html>`;

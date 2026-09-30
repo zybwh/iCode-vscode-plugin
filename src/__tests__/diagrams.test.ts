@@ -2,6 +2,7 @@
 import { describe, expect, it } from "vitest";
 import { closedDiagramFence, renderTerminalDiagram } from "../chat/webview/diagrams";
 import { renderMarkdown } from "../chat/webview/renderer";
+import "../chat/webview/diagramEngine";
 
 function rendered(source: string) {
   const root = document.createElement("div");

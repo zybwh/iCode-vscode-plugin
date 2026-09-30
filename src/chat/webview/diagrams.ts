@@ -1,6 +1,17 @@
-import { renderMermaidASCII } from "beautiful-mermaid";
+import { installedDiagramEngine } from "./diagramEngineTypes";
 
 const cache = new Map<string, string | null>();
+let missingEngineHandler: (() => void) | null = null;
+
+/** The webview loads the engine lazily; renders before it arrives fall back to source. */
+export function onMissingDiagramEngine(handler: () => void): void {
+  missingEngineHandler = handler;
+}
+
+/** True when text contains a mermaid fence that may still need the engine. */
+export function mentionsMermaid(text: string): boolean {
+  return /(```|~~~)\s*mermaid/i.test(text);
+}
 
 function wideCharacter(char: string): boolean {
   const code = char.codePointAt(0)!;
@@ -45,8 +56,14 @@ export function renderTerminalDiagram(source: string): string | null {
     if (!/^\s*(graph|flowchart|stateDiagram(?:-v2)?|sequenceDiagram|classDiagram|erDiagram|xychart(?:-beta)?)\b/.test(source)) return null;
     // The library currently treats RL as LR; showing reversed semantics would be misleading.
     if (/^\s*(?:graph|flowchart)\s+RL\b/.test(source)) return null;
+    const engine = installedDiagramEngine();
+    if (!engine) {
+      // Rendered as source until the engine arrives; not cached so it re-renders then.
+      missingEngineHandler?.();
+      return null;
+    }
     const prepared = terminalSource(source);
-    const diagram = prepared.restore(renderMermaidASCII(prepared.source, {
+    const diagram = prepared.restore(engine.renderMermaidASCII(prepared.source, {
       colorMode: "none", useAscii: false, paddingX: 4, paddingY: 2, boxBorderPadding: 1,
     }));
     if (diagram.length > 100000 || !diagram.trim()) return null;

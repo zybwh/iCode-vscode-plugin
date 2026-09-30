@@ -21,6 +21,8 @@ import type {
 } from "../panel";
 import { el, formatDurationMs, formatClock, tokenValueOrDash, formatJson, shortSessionId, formatCountLabel, imageDataUri } from "./helpers";
 import { isInsideUntrustedMarkup, renderMarkdown } from "./renderer";
+import { mentionsMermaid } from "./diagrams";
+import { onDiagramEngineReady } from "./diagramLoader";
 import { shellCommandFromPrompt } from "./shellPrompt";
 import { processThinkTags } from "./thinkTags";
 import {
@@ -1710,6 +1712,16 @@ window.addEventListener("message", (e) => {
 // ──────────────────────────────────────────────
 
 let userTurnCount = 0;
+
+// Mermaid fences render as source until the lazily loaded engine arrives; then redraw them.
+onDiagramEngineReady(() => {
+  for (const message of state.messages) {
+    if (mentionsMermaid(message.text) || (message.activityDetail && mentionsMermaid(message.activityDetail))
+      || message.toolContent?.some((block) => block.type === "text" && mentionsMermaid(block.text))) {
+      updateMessage(message.id, {});
+    }
+  }
+});
 
 /** True while a restored transcript is replayed; per-message side effects run once at the end. */
 let replayingTranscript = false;
