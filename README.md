@@ -95,7 +95,7 @@ For release gating, use [VSIX Release Checklist](./RELEASE_CHECKLIST.md). It is 
 
 `npm run deploy` packages the universal VSIX and installs it into the local macOS openUBMC Studio app for dogfooding. It does not publish a marketplace or GitHub release.
 
-Release builds are manual. The CD workflow publishes a VSIX tag such as `v0.0.27-icode-v0.27.1` from a selected ref and downloads offline runtime binaries from the public [iCode releases](https://github.com/openJiuwen-ai/iCode/releases). It uses the standard GitHub Actions token; no private backend repository token is required.
+Release builds are manual. The CD workflow publishes a VSIX tag such as `v0.0.28-icode-v0.27.1` from a selected ref and downloads offline runtime binaries from the public [iCode releases](https://github.com/openJiuwen-ai/iCode/releases). It uses the standard GitHub Actions token; no private backend repository token is required.
 
 ## Current Status
 
@@ -191,9 +191,9 @@ npm run build
 npm run package
 ```
 
-The package command requires [uv](https://github.com/astral-sh/uv) and writes `icode-vscode-plugin-0.0.27.vsix`. The universal VSIX does not bundle the CLI. `npm run deploy` installs it into the local macOS openUBMC Studio application.
+The package command requires [uv](https://github.com/astral-sh/uv) and writes `icode-vscode-plugin-0.0.28.vsix`. The universal VSIX does not bundle the CLI. `npm run deploy` installs it into the local macOS openUBMC Studio application.
 
-打包需要 [uv](https://github.com/astral-sh/uv)，输出 `icode-vscode-plugin-0.0.27.vsix`。通用包不包含 CLI；`npm run deploy` 会安装到本机 macOS 的 openUBMC Studio。
+打包需要 [uv](https://github.com/astral-sh/uv)，输出 `icode-vscode-plugin-0.0.28.vsix`。通用包不包含 CLI；`npm run deploy` 会安装到本机 macOS 的 openUBMC Studio。
 
 For integration tests, set `ICODE_BINARY_PATH` to the iCode executable and run `npm run test:integration`. The default expected CLI version is 0.27.1; override it with `ICODE_EXPECTED_VERSION` when testing another release. Model-backed tests require a configured model profile.
 

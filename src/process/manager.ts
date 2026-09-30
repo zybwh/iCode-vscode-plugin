@@ -53,6 +53,16 @@ function spawnChrysProcess(binaryPath: string, args: string[], cwd?: string): Ch
   });
 }
 
+async function stopWindowsProcessTree(pid: number): Promise<void> {
+  await new Promise<void>((resolve) => {
+    const killer = spawn("taskkill", ["/pid", String(pid), "/T", "/F"], { stdio: "ignore", windowsHide: true });
+    const timer = setTimeout(() => { killer.kill(); resolve(); }, SHUTDOWN_TIMEOUT_MS);
+    const done = () => { clearTimeout(timer); resolve(); };
+    killer.once("error", done);
+    killer.once("close", done);
+  });
+}
+
 export class ProcessManager {
   private _state: ProcessState = "stopped";
   private _child: ChildProcess | null = null;
@@ -161,6 +171,10 @@ export class ProcessManager {
     this._crashCount = MAX_CONSECUTIVE_CRASHES; // prevent auto-restart
     if (this._child) {
       this._child.removeAllListeners();
+      // A .cmd launcher owns a Python/CLI child; stopping only cmd.exe leaves it running.
+      if (process.platform === "win32" && this._child.pid && this._child.exitCode === null) {
+        await stopWindowsProcessTree(this._child.pid);
+      }
       if (this._child.exitCode === null && this._child.signalCode === null) {
         this._child.kill("SIGTERM");
         await new Promise<void>((resolve) => {
