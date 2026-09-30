@@ -2,13 +2,12 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { PassThrough } from "node:stream";
 import { ChrysAcpClient } from "../acp/client";
 
-type ProcessState = "stopped" | "starting" | "running" | "error";
+type ProcessState = "stopped" | "starting" | "running";
 
-export type ProcessEvent = "connected" | "disconnected" | "error" | "stderr" | "stdout" | "started";
+export type ProcessEvent = "connected" | "disconnected" | "stderr" | "stdout" | "started";
 
 type EventHandler = (...args: unknown[]) => void;
 
-const MAX_CONSECUTIVE_CRASHES = 3;
 const SHUTDOWN_TIMEOUT_MS = 5000;
 const RECENT_OUTPUT_LIMIT = 80;
 
@@ -66,7 +65,7 @@ async function stopWindowsProcessTree(pid: number): Promise<void> {
 export class ProcessManager {
   private _state: ProcessState = "stopped";
   private _child: ChildProcess | null = null;
-  private _crashCount = 0;
+  private _cancelStart: ((error: Error) => void) | null = null;
   private _client: ChrysAcpClient | null = null;
   private _handlers = new Map<ProcessEvent, EventHandler[]>();
   private _recentOutput: string[] = [];
@@ -120,32 +119,53 @@ export class ProcessManager {
 
     this._emit("started", binaryPath, args);
 
-    this._child = spawnChrysProcess(binaryPath, args, cwd);
+    const child = spawnChrysProcess(binaryPath, args, cwd);
+    this._child = child;
 
     // Collect stderr for debugging
     let stderrTail = "";
-    if (this._child.stderr) {
-      this._child.stderr.on("data", (chunk: Buffer) => {
-        const text = chunk.toString();
-        this._rememberOutput("stderr", text);
-        stderrTail = `${stderrTail}${text}`.slice(-64 * 1024);
-        this._emit("stderr", text);
-      });
-    }
-
-    this._child.on("error", (err: Error) => {
-      this._handleExit("error", err.message);
+    child.stderr?.on("data", (chunk: Buffer) => {
+      const text = chunk.toString();
+      this._rememberOutput("stderr", text);
+      stderrTail = `${stderrTail}${text}`.slice(-64 * 1024);
+      this._emit("stderr", text);
     });
 
-    this._child.on("exit", (code: number | null, signal: string | null) => {
+    // A missing or non-executable binary reports "error" instead of "spawn"; reject
+    // start() so the caller shows one setup error instead of a restart loop.
+    try {
+      await new Promise<void>((resolve, reject) => {
+        this._cancelStart = reject;
+        child.once("spawn", () => {
+          child.off("error", reject);
+          resolve();
+        });
+        child.once("error", reject);
+      });
+    } catch (error) {
+      if (this._child === child) {
+        this._child = null;
+        this._state = "stopped";
+      }
+      throw error;
+    } finally {
+      this._cancelStart = null;
+    }
+    if (this._child !== child) throw new Error("iCode process was stopped while starting");
+
+    // Node can emit both "error" and "exit" for one child; only the first report counts.
+    child.on("error", (err: Error) => {
+      this._handleExit(child, "error", err.message);
+    });
+    child.on("exit", (code: number | null, signal: string | null) => {
       const reason = signal ? `signal ${signal}` : `exit code ${code ?? "unknown"}`;
-      this._handleExit(reason, stderrTail);
+      this._handleExit(child, reason, stderrTail);
     });
 
     // Wire up ACP client to stdio
     const client = new ChrysAcpClient();
-    const stdin = this._child.stdin!;
-    const stdout = this._child.stdout!;
+    const stdin = child.stdin!;
+    const stdout = child.stdout!;
 
     // PassThrough allows us to use readline on stdout
     const passThrough = new PassThrough();
@@ -159,7 +179,6 @@ export class ProcessManager {
 
     this._client = client;
     this._state = "running";
-    this._crashCount = 0;
 
     this._emit("connected", client);
     return client;
@@ -168,30 +187,30 @@ export class ProcessManager {
   /** Gracefully stop the chrys process. */
   async stop(): Promise<void> {
     this._client?.transport.detach();
-    this._crashCount = MAX_CONSECUTIVE_CRASHES; // prevent auto-restart
-    if (this._child) {
-      this._child.removeAllListeners();
+    const child = this._child;
+    this._child = null;
+    this._cancelStart?.(new Error("iCode process was stopped while starting"));
+    if (child) {
+      child.removeAllListeners();
+      // Keep a late spawn/kill error from surfacing as an unhandled "error" event.
+      child.on("error", () => {});
       // A .cmd launcher owns a Python/CLI child; stopping only cmd.exe leaves it running.
-      if (process.platform === "win32" && this._child.pid && this._child.exitCode === null) {
-        await stopWindowsProcessTree(this._child.pid);
+      if (process.platform === "win32" && child.pid && child.exitCode === null) {
+        await stopWindowsProcessTree(child.pid);
       }
-      if (this._child.exitCode === null && this._child.signalCode === null) {
-        this._child.kill("SIGTERM");
+      if (child.exitCode === null && child.signalCode === null) {
         await new Promise<void>((resolve) => {
           const timeout = setTimeout(() => {
-            if (this._child && this._child.exitCode === null) {
-              this._child.kill("SIGKILL");
-            }
+            if (child.exitCode === null) child.kill("SIGKILL");
             resolve();
           }, SHUTDOWN_TIMEOUT_MS);
-
-          this._child!.once("exit", () => {
+          child.once("exit", () => {
             clearTimeout(timeout);
             resolve();
           });
+          child.kill("SIGTERM");
         });
       }
-      this._child = null;
     }
     this._client = null;
     this._state = "stopped";
@@ -199,8 +218,8 @@ export class ProcessManager {
 
   // ── Private ────────────────────────────────
 
-  private _handleExit(reason: string, stderr: string): void {
-    const wasRunning = this._state === "running";
+  private _handleExit(child: ChildProcess, reason: string, stderr: string): void {
+    if (this._child !== child) return;
     this._state = "stopped";
     this._child = null;
 
@@ -209,17 +228,13 @@ export class ProcessManager {
       this._client = null;
     }
 
-    this._emit("disconnected", reason);
-
-    if (wasRunning && this._crashCount < MAX_CONSECUTIVE_CRASHES) {
-      this._crashCount++;
-      // Auto-restart will be handled by extension.ts which listens for "disconnected"
-    }
-
-    if (this._crashCount >= MAX_CONSECUTIVE_CRASHES) {
-      this._state = "error";
-      const recentOutput = this.recentOutput;
-      this._emit("error", `iCode process crashed ${this._crashCount} times: ${reason}.${stderr ? " Stderr: " + stderr : ""}${recentOutput ? "\nRecent output:\n" + recentOutput : ""}`);
-    }
+    const recentOutput = this.recentOutput;
+    const detail = [
+      reason,
+      stderr.trim() ? `Stderr: ${stderr.trim().slice(-2000)}` : "",
+      recentOutput ? `Recent output:\n${recentOutput}` : "",
+    ].filter(Boolean).join("\n");
+    // Auto-restart and its attempt limit are owned by extension.ts, which listens for "disconnected".
+    this._emit("disconnected", reason, detail);
   }
 }

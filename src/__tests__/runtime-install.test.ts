@@ -3,7 +3,7 @@ import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import * as os from "node:os";
 import { createHash } from "node:crypto";
-import { checksumFor, installRuntime, runtimeTarget, launcherText, managedRuntime, type InstallDependencies } from "../runtime/install";
+import { checksumFor, installRuntime, runtimeTarget, launcherText, managedRuntime, pruneStaleRuntimes, STALE_RUNTIME_GRACE_MS, type InstallDependencies } from "../runtime/install";
 import { resolveRuntime } from "../runtime/resolve";
 const target = runtimeTarget();
 const payload = Buffer.from('release fixture');
@@ -88,5 +88,21 @@ describe('managed runtime installation', () => {
         await fs.mkdir(path.join(root, 'runtimes'));
         await fs.writeFile(path.join(root, 'runtimes/active.json'), JSON.stringify({ directory: '../../outside', launcher: target.launcher }));
         expect(await managedRuntime(root)).toBeNull();
+    }));
+});
+describe('managed runtime cleanup', () => {
+    it('prunes superseded runtimes only after their grace period', async () => temporary(async (root) => {
+        const io = dependencies();
+        await installRuntime(root, new AbortController().signal, () => { }, io);
+        await installRuntime(root, new AbortController().signal, () => { }, io);
+        const runtimes = path.join(root, 'runtimes');
+        const active = JSON.parse(await fs.readFile(path.join(runtimes, 'active.json'), 'utf8')).directory as string;
+        const directories = (await fs.readdir(runtimes)).filter(name => name.startsWith('icode-'));
+        expect(directories).toHaveLength(2);
+        expect(await pruneStaleRuntimes(root)).toEqual([]);
+        const removed = await pruneStaleRuntimes(root, Date.now() + STALE_RUNTIME_GRACE_MS + 1000);
+        expect(removed).toEqual(directories.filter(name => name !== active));
+        expect((await fs.readdir(runtimes)).filter(name => name.startsWith('icode-'))).toEqual([active]);
+        expect(await managedRuntime(root)).toContain(active);
     }));
 });

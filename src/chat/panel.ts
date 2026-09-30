@@ -3,7 +3,7 @@ import type { CompanionViewState } from "../companion/types";
 import * as vscode from "vscode";
 import type { ChatMessage } from "./provider";
 import type { ContentBlock, ModelSummary, PermissionOption, PlanEntry, ProfileSummary, RequestInputAnswer, RequestInputQuestion, SessionInfo } from "../acp/types";
-import { rt, bindRuntime, currentRuntime, focusRuntime } from "../state/runtime";
+import { rt, bindRuntime, currentRuntime, focusRuntime, scheduleIdleRuntimeRelease } from "../state/runtime";
 import { resolveUiLanguage, type UiLanguage } from "../common/i18n";
 import type { UiBrand } from "../common/uiBrand";
 import type { UiTheme } from "../common/uiTheme";
@@ -506,6 +506,7 @@ export class ChatPanel {
         rt.chatPanel = null;
         rt.closeInlineDialog();
         // A view closing is not an approval decision or a task cancellation.
+        scheduleIdleRuntimeRelease(this.owner);
       }
       this._sendHandler = null;
       this._cancelHandler = null;

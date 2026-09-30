@@ -159,6 +159,51 @@ export async function managedRuntime(storage: string): Promise<string | null> {
         return null;
     }
 }
+/** Superseded runtimes are kept for a while because another window may still run them. */
+export const STALE_RUNTIME_GRACE_MS = 7 * 24 * 60 * 60 * 1000;
+/**
+ * Best-effort removal of managed runtimes that are no longer active. Each install keeps
+ * the previous runtime intact for atomic activation; without pruning every reinstall or
+ * upgrade leaves a full runtime (hundreds of MB) behind in extension global storage.
+ */
+export async function pruneStaleRuntimes(storage: string, now = Date.now(), graceMs = STALE_RUNTIME_GRACE_MS): Promise<string[]> {
+    const root = path.join(storage, "runtimes");
+    const active = await activeRuntimeDirectory(root);
+    if (!active)
+        return [];
+    let entries: import("node:fs").Dirent[];
+    try {
+        entries = await fs.readdir(root, { withFileTypes: true });
+    }
+    catch {
+        return [];
+    }
+    const removed: string[] = [];
+    for (const entry of entries) {
+        if (!entry.isDirectory() || entry.name === active || !/^icode-[a-zA-Z0-9.-]+$/.test(entry.name))
+            continue;
+        const directory = path.join(root, entry.name);
+        try {
+            if (now - (await fs.stat(directory)).mtimeMs < graceMs)
+                continue;
+            await fs.rm(directory, { recursive: true, force: true });
+            removed.push(entry.name);
+        }
+        catch {
+            // A runtime still in use (for example on Windows) is retried on a later prune.
+        }
+    }
+    return removed;
+}
+async function activeRuntimeDirectory(root: string): Promise<string | null> {
+    try {
+        const record = JSON.parse(await fs.readFile(path.join(root, "active.json"), "utf8")) as { directory?: unknown };
+        return typeof record.directory === "string" ? record.directory : null;
+    }
+    catch {
+        return null;
+    }
+}
 export interface InstallDependencies {
     download: typeof download;
     extract: typeof extractBinary;
@@ -202,8 +247,15 @@ async function performInstall(storage: string, signal: AbortSignal, progress: In
         await fs.rm(archive);
         await fs.writeFile(pointer, JSON.stringify({ directory, launcher: target.launcher }));
         signal.throwIfAborted();
+        const previous = await activeRuntimeDirectory(root);
         await fs.rename(pointer, path.join(root, "active.json"));
         activated = true;
+        // Start the superseded runtime's grace period now; pruning keys off its mtime.
+        if (previous && previous !== directory) {
+            const now = new Date();
+            await fs.utimes(path.join(root, previous), now, now).catch(() => { });
+        }
+        await pruneStaleRuntimes(storage).catch(() => []);
         progress("ready");
         return launcher;
     }

@@ -20,6 +20,8 @@ type IncomingHandler = (method: string, params: unknown, respond: (result: unkno
 
 const LINE_TERMINATOR = "\n";
 const DEFAULT_REQUEST_TIMEOUT_MS = 60_000;
+/** Session creation and history replay can be slow on first run or for long sessions. */
+export const SESSION_LIFECYCLE_TIMEOUT_MS = 10 * 60_000;
 
 export class AcpRequestError extends Error {
   readonly details: unknown;

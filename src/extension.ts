@@ -7,7 +7,7 @@ import * as vscode from "vscode";
 import * as path from "node:path";
 import * as os from "node:os";
 import * as fs from "node:fs";
-import { managedRuntime } from "./runtime/install";
+import { managedRuntime, pruneStaleRuntimes } from "./runtime/install";
 import { resolveRuntime } from "./runtime/resolve";
 import { ProcessManager } from "./process/manager";
 import { SessionManager } from "./session/manager";
@@ -25,6 +25,7 @@ import { chatPanelState } from "./common/chatPanelState";
 import { rt, bindRuntime, currentRuntime, withRuntime, focusRuntime, createSessionRuntime, findSessionRuntime, sessionRuntimes } from "./state/runtime";
 import { applyPreferredDefaultsToNewSession, initializePreferredDefaults, refreshPreferredDefaultsFromSettings, rememberPreferredAgent } from "./session/defaults";
 import { handleSessionUpdate } from "./handlers/session";
+import { AcpRequestError } from "./acp/protocol";
 import { resetRenderState, refreshRuntimeSnapshot } from "./handlers/notifications";
 import { PACKAGE_VERSION, PROTOCOL_VERSION } from "./common/version";
 import type { SessionInfo } from "./acp/types";
@@ -100,6 +101,11 @@ async function activateRuntime(context: vscode.ExtensionContext): Promise<ChrysA
   rt.connectionDurationMs = null;
   registerCommands(context);
   registerConfigurationListener(context);
+  if (context.globalStorageUri) {
+    void pruneStaleRuntimes(context.globalStorageUri.fsPath).then((removed) => {
+      if (removed.length) logInfo(`Removed superseded managed runtimes: ${removed.join(", ")}`);
+    }, (error) => logWarn(`Managed runtime cleanup failed: ${String(error)}`));
+  }
   ensureChatPanel(context);
   ensureSessionTree(context);
   rt.chatPanel?.reveal();
@@ -180,7 +186,9 @@ function scheduleRestart(context: vscode.ExtensionContext): void {
   rt.restartAttempts += 1;
   const delay = Math.min(1000 * rt.restartAttempts, 5000);
   logWarn(`Scheduling ACP restart attempt ${rt.restartAttempts}/${MAX_RESTART_ATTEMPTS} in ${delay}ms`);
-  setTimeout(() => {
+  rt.clearRestartTimer();
+  rt.restartTimer = setTimeout(() => {
+    rt.restartTimer = null;
     if (rt.shuttingDown || !rt.processManager || rt.processManager.state !== "stopped" || !rt.currentBinaryPath || !rt.currentCwd) return;
     void connectBackend(context, rt.currentBinaryPath).then((connected) => {
       if (!connected) scheduleRestart(context);
@@ -446,7 +454,9 @@ async function initializeActiveSession(context: vscode.ExtensionContext): Promis
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       recordLifecycleEvent("SessionRestoreFailed", `${sessionShortId(savedState.sessionId)}: ${message}`);
-      rt.clearPersistedSession();
+      // Only a backend rejection means the session cannot be restored. A timeout or a
+      // backend exit keeps the pointer so the next connection can retry the restore.
+      if (error instanceof AcpRequestError) rt.clearPersistedSession();
       rt.currentSessionId = null;
       rt.transcript.appendMessage({
         id: nextMessageId(),
@@ -470,6 +480,7 @@ async function initializeActiveSession(context: vscode.ExtensionContext): Promis
 
 export function ensureChatPanel(context: vscode.ExtensionContext, preserveFocus = false): ChatPanel {
   if (!rt.chatPanel) {
+    rt.cancelIdleRelease();
     const panel = rt.chatPanel = new ChatPanel(context, preserveFocus);
 
     // Lazily import action handlers to avoid circular deps
@@ -1254,6 +1265,8 @@ function relativeSessionTime(iso: string): string {
 export async function deactivate(): Promise<void> {
   await Promise.all([...sessionRuntimes].map(owner => withRuntime(owner, async () => {
     owner.shuttingDown = true;
+    owner.clearRestartTimer();
+    owner.cancelIdleRelease();
     owner.persistCurrentSession();
     owner.approvalHandler?.resolve();
     owner.askUserHandler?.cancelActive("extension-shutdown");
@@ -1337,6 +1350,7 @@ export function restartBackendConnection(
 
 async function restartRuntimeConnection(context: vscode.ExtensionContext, binaryOverride?: string): Promise<boolean> {
   if (rt.connectionInitialization) await rt.connectionInitialization;
+  rt.clearRestartTimer();
   rt.approvalHandler?.resolve();
   rt.askUserHandler?.cancelActive("backend-restarting");
   if (rt.processManager && rt.processManager.state !== "stopped") {
@@ -1405,8 +1419,8 @@ function createProcessManager(context: vscode.ExtensionContext): ProcessManager 
     logInfo("ACP transport connected");
     recordLifecycleEvent("AcpProcessConnected", rt.currentCwd ?? "(no workspace)");
   }));
-  manager.on("disconnected", bindRuntime((reason) => {
-    logWarn(`ACP process disconnected: ${String(reason)}`);
+  manager.on("disconnected", bindRuntime((reason, detail) => {
+    logWarn(`ACP process disconnected: ${String(detail ?? reason)}`);
     recordLifecycleEvent("AcpProcessDisconnected", String(reason));
     console.warn(`[iCode] ACP process disconnected: ${String(reason)}`);
     rt.approvalHandler?.resolve();
@@ -1415,19 +1429,16 @@ function createProcessManager(context: vscode.ExtensionContext): ProcessManager 
     (rt as { sessionManager: SessionManager | undefined }).sessionManager = undefined;
     setConnectionState("disconnected", String(reason));
     rt.chatPanel?.showReconnectNotice();
-    scheduleRestart(context);
-  }));
-  manager.on("error", bindRuntime((message) => {
-    logError(String(message));
-    recordLifecycleEvent("AcpProcessError", String(message));
-    setConnectionState("error", String(message));
-    void vscode.window.showErrorMessage(`iCode: ${message}`);
+    // An exit during initialize is reported by connectBackendOnce; restarting here too
+    // would race its error handling. Restart retries chain through scheduleRestart itself.
+    if (!rt.connectionInitialization) scheduleRestart(context);
   }));
   return manager;
 }
 
 async function reconnectBackend(context: vscode.ExtensionContext): Promise<void> {
   if (rt.connectionInitialization) await rt.connectionInitialization;
+  rt.clearRestartTimer();
   const configured = vscode.workspace.getConfiguration("chrys").get<string>("binary.path")?.trim() ?? "";
   if (configured && rt.currentBinaryPath === expandHome(configured) && rt.processManager?.state === "running" && rt.sessionManager) {
     return;

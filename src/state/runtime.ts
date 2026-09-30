@@ -96,6 +96,18 @@ export class ExtensionRuntime {
   preferredApprovalMode = "auto";
   skipRestoreOnce = false;
   restartAttempts = 0;
+  restartTimer: ReturnType<typeof setTimeout> | null = null;
+  idleReleaseTimer: ReturnType<typeof setTimeout> | null = null;
+
+  cancelIdleRelease(): void {
+    if (this.idleReleaseTimer) clearTimeout(this.idleReleaseTimer);
+    this.idleReleaseTimer = null;
+  }
+
+  clearRestartTimer(): void {
+    if (this.restartTimer) clearTimeout(this.restartTimer);
+    this.restartTimer = null;
+  }
 
   // dialog tracking
   activeInlineDialogKind: ChatInlineDialogState["kind"] | null = null;
@@ -213,7 +225,7 @@ export class ExtensionRuntime {
     this.approvalHandler?.resolve();
     this.askUserHandler?.cancelActive("session-closed");
     return Promise.all([
-      this.sessionManager.cancel().catch(() => {}),
+      this.sessionManager.cancel({ waitForTurn: false }).catch(() => {}),
       this.sessionManager.close().catch(() => {}),
     ]).then(() => {});
   }
@@ -293,6 +305,60 @@ export function createSessionRuntime(cwd: string): ExtensionRuntime {
   owner.skipRestoreOnce = true;
   sessionRuntimes.add(owner);
   return owner;
+}
+
+/** How long a closed, idle session tab keeps its backend process before it is released. */
+export const IDLE_RUNTIME_RELEASE_MS = 10 * 60 * 1000;
+
+function canReleaseRuntime(owner: ExtensionRuntime): boolean {
+  return owner !== initialRuntime
+    && owner !== activeRuntime
+    && sessionRuntimes.has(owner)
+    && !owner.chatPanel
+    && !owner.shuttingDown
+    && !owner.tabInitialization
+    && !owner.connectionInitialization
+    && !owner.pendingApproval
+    && !owner.pendingQuestion
+    && (!owner.sessionManager || owner.sessionManager.state === "idle");
+}
+
+/**
+ * Release the ACP process and in-memory transcript of a session whose tab stays closed
+ * while idle. The saved session remains in the Sessions tree and reopening it loads it
+ * into a fresh runtime. Busy runtimes (running turn, pending approval/question) are
+ * re-checked later instead of interrupted.
+ */
+export function scheduleIdleRuntimeRelease(owner: ExtensionRuntime, delayMs = IDLE_RUNTIME_RELEASE_MS): void {
+  owner.cancelIdleRelease();
+  if (owner === initialRuntime) return;
+  owner.idleReleaseTimer = setTimeout(() => {
+    owner.idleReleaseTimer = null;
+    if (owner.chatPanel || !sessionRuntimes.has(owner)) return;
+    if (!canReleaseRuntime(owner)) {
+      scheduleIdleRuntimeRelease(owner, delayMs);
+      return;
+    }
+    void releaseRuntime(owner);
+  }, delayMs);
+  owner.idleReleaseTimer.unref?.();
+}
+
+export async function releaseRuntime(owner: ExtensionRuntime): Promise<void> {
+  owner.cancelIdleRelease();
+  owner.clearRestartTimer();
+  sessionRuntimes.delete(owner);
+  await withRuntime(owner, async () => {
+    owner.shuttingDown = true;
+    owner.closeInlineDialog();
+    owner.managementPanel?.dispose();
+    await owner.dropSession();
+    await owner.processManager?.stop().catch(() => {});
+    owner.workspaceTerminal?.dispose();
+    owner.resetRenderState(true);
+    owner.transcript.clearMessages();
+  });
+  owner.sessionTreeProvider?.refresh();
 }
 
 /** Compatibility facade for session services. Entry points MUST bind their owner:

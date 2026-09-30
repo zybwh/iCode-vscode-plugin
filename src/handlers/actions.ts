@@ -83,7 +83,10 @@ export async function handleSendMessage(text: string, blocks: ContentBlock[]): P
     void rememberPrompt(rt.extensionContext.workspaceState, rt.currentCwd, text).catch(error => logWarn(`Could not save prompt history: ${String(error)}`));
   }
   const sessionId = rt.currentSessionId;
-  const ownsTurn = () => rt.sessionManager === sessionManager && rt.currentSessionId === sessionId;
+  let promptTurn: number | null = null;
+  const ownsTurn = () => rt.sessionManager === sessionManager
+    && rt.currentSessionId === sessionId
+    && (promptTurn === null || sessionManager.turn === promptTurn);
 
   if (rt.sessionManager.state === "running" || rt.sessionManager.state === "cancelling") {
     logInfo("Queueing prompt as a mid-run injection.");
@@ -124,7 +127,9 @@ export async function handleSendMessage(text: string, blocks: ContentBlock[]): P
   const turnStartedAtMs = Date.now();
 
   try {
-    await sessionManager.sendPrompt(messageBlocks);
+    const prompt = sessionManager.sendPrompt(messageBlocks);
+    promptTurn = sessionManager.turn;
+    await prompt;
     if (ownsTurn()) awardCompanionUsageEvent("turn_completed");
     logInfo("Prompt request completed.");
   } catch (err) {

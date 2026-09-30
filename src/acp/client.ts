@@ -1,6 +1,5 @@
 import type { McpListResponse, SkillsListResponse } from "./types";
-import { AcpRequestError } from "./protocol";
-import { AcpClient } from "./protocol";
+import { AcpClient, AcpRequestError, SESSION_LIFECYCLE_TIMEOUT_MS } from "./protocol";
 import type {
   InitializeResponse,
   InitializeRequest,
@@ -223,7 +222,7 @@ export class ChrysAcpClient {
       mcpServers: [],
       additionalDirectories,
     };
-    return (await this.acp.request("session/new", params as unknown as Record<string, unknown>)) as NewSessionResponse;
+    return (await this.acp.request("session/new", params as unknown as Record<string, unknown>, SESSION_LIFECYCLE_TIMEOUT_MS)) as NewSessionResponse;
   }
 
   async loadSession(cwd: string, sessionId: string, additionalDirectories?: string[]): Promise<LoadSessionResponse> {
@@ -233,7 +232,7 @@ export class ChrysAcpClient {
       mcpServers: [],
       additionalDirectories,
     };
-    return (await this.acp.request("session/load", params as unknown as Record<string, unknown>)) as LoadSessionResponse;
+    return (await this.acp.request("session/load", params as unknown as Record<string, unknown>, SESSION_LIFECYCLE_TIMEOUT_MS)) as LoadSessionResponse;
   }
 
   async listSessions(cwd: string, cursor?: string): Promise<ListSessionsResponse> {
