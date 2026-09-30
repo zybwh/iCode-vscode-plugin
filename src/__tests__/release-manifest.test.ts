@@ -649,7 +649,7 @@ describe("VSIX release manifest", () => {
     expect(releaseChecklist).toContain("dedicated ACP reset route");
   });
 
-  it("keeps VSIX 0.0.30 release metadata aligned", () => {
+  it("keeps VSIX 0.0.31 release metadata aligned", () => {
     const packageLock = JSON.parse(readSource("package-lock.json")) as {
       version: string;
       packages: Record<string, { version?: string }>;
@@ -658,11 +658,11 @@ describe("VSIX release manifest", () => {
     const readme = readSource("README.md");
     const workflow = readSource(".github", "workflows", "cd.yml");
 
-    expect(packageJson.version).toBe("0.0.30");
-    expect(packageLock.version).toBe("0.0.30");
-    expect(packageLock.packages[""].version).toBe("0.0.30");
-    expect(versionSource).toContain('PACKAGE_VERSION = "0.0.30"');
-    expect(readme).toContain("v0.0.30-icode-v0.28.0");
+    expect(packageJson.version).toBe("0.0.31");
+    expect(packageLock.version).toBe("0.0.31");
+    expect(packageLock.packages[""].version).toBe("0.0.31");
+    expect(versionSource).toContain('PACKAGE_VERSION = "0.0.31"');
+    expect(readme).toContain("v0.0.31-icode-v0.28.0");
     expect(workflow).toMatch(/VSIX release tag to create, for example v\d+\.\d+\.\d+-icode-v\d+\.\d+\.\d+/);
   });
 
