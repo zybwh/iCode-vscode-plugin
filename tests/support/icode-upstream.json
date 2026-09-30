@@ -1,0 +1,7 @@
+{
+  "repository": "openJiuwen-ai/iCode",
+  "revision": "bb45692104bc1d26882729e90fc145e3a114e066",
+  "stubPath": "tests/support/acp_stub_agent.py",
+  "stubSha256": "34815fa122d9eb827a6f31d51134589e98077a3b5305f9dc51e42088282826c3",
+  "acpSdkVersion": "0.10.1"
+}

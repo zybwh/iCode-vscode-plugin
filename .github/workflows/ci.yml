@@ -64,6 +64,44 @@ jobs:
           path: icode-vscode-plugin-*.vsix
           retention-days: 7
 
+  acp-fixtures:
+    name: Upstream ACP fault scenarios
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+          cache: npm
+      - run: npm ci
+      - name: Read upstream fixture pin
+        id: fixture
+        run: |
+          node -e 'const fs = require("node:fs"); const p = require("./tests/support/icode-upstream.json"); fs.appendFileSync(process.env.GITHUB_OUTPUT, `repository=${p.repository}\nrevision=${p.revision}\nsdk=${p.acpSdkVersion}\n`);'
+      - uses: actions/checkout@v6
+        with:
+          repository: ${{ steps.fixture.outputs.repository }}
+          ref: ${{ steps.fixture.outputs.revision }}
+          path: .upstream-icode
+          sparse-checkout: tests/support
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+      - name: Prepare fixture-only Python environment
+        env:
+          ACP_SDK_VERSION: ${{ steps.fixture.outputs.sdk }}
+        run: |
+          uv venv --python 3.14 "$RUNNER_TEMP/acp-fixture-venv"
+          uv pip install --python "$RUNNER_TEMP/acp-fixture-venv/bin/python" "agent-client-protocol==$ACP_SDK_VERSION"
+      - name: Test production client against upstream scenarios
+        run: |
+          ICODE_SOURCE_PATH="$GITHUB_WORKSPACE/.upstream-icode" ICODE_TEST_PYTHON="$RUNNER_TEMP/acp-fixture-venv/bin/python" npm run test:acp-stub
+
   runtime-compatibility:
     name: Public iCode ACP compatibility
     runs-on: ubuntu-latest

@@ -38,7 +38,7 @@ Universal VSIX packages must not include `extension/bin/` or `extension/runtime/
 
 ## GitHub Release
 
-The CD workflow is manual-only. Creating a GitHub release or tag must not automatically start CD, because release tags such as `v0.0.28-icode-v0.27.1` are VSIX tags, not iCode CLI runtime tags.
+The CD workflow is manual-only. Creating a GitHub release or tag must not automatically start CD, because release tags such as `v0.0.29-icode-v0.28.0` are VSIX tags, not iCode CLI runtime tags.
 
 When using CD to publish platform VSIX packages, pass both:
 
@@ -281,3 +281,12 @@ Current verification: browser fixtures exercise the production renderers; these 
 - Test host-based target selection in SSH/WSL and a clear error for unsupported architectures. Validate Windows `tar` extraction and `.cmd` startup on Windows, not on macOS.
 - CI tests the same source SHA and selected backend release as CD; every platform runs ACP initialization and session smoke before packaging. No model inference is needed for this smoke.
 - `npm run package` rebuilds the frontend. Verify universal and platform archives retain the `icode-vscode-plugin` identity, including raw-binary packages with LICENSE/NOTICE.
+
+### ACP integration test fixtures
+
+- Run `npm run test:integration` against the selected official release and `npm run test:acp-stub` against the pinned upstream fixture. Setup and coverage boundaries are documented in `tests/README.md`.
+- Keep the source revision, fixture SHA-256 and ACP SDK version in `tests/support/icode-upstream.json` aligned. Neither the upstream test checkout nor its Python environment belongs in a VSIX.
+- Compatibility tests use the production client, isolated configuration/workspace directories, and the built-in mock provider; no live model credentials or pre-existing sessions are required.
+
+- ACP regressions: response/error followed by EOF preserves its outcome; foreign-session updates cannot enter the transcript; message IDs split answers; reordered tool starts reuse their card and retain results; pending approval/AskUser settle on session close or backend restart.
+- Tool-card semantic replay: shell output, failure, diff, hosted image and artifact content survive live updates, history projection, collapse/expand and webview rehydration (`tool-replay-semantic.test.ts`).
