@@ -34,6 +34,27 @@ describe("chat webview interactions", () => {
   beforeEach(() => { expect(document.body.textContent).not.toContain("NaN"); host({ type: "clearMessages" }); update(); sent.length = 0; });
   afterAll(() => { vi.clearAllTimers(); vi.useRealTimers(); vi.unstubAllGlobals(); });
 
+  it("separates live usage scopes and opens historical analysis from Context", () => {
+    update({ contextUsedTokens: 120, contextMaxTokens: 1000, contextPct: 12, totalTokens: 50000, inputTokens: 45000, outputTokens: 5000, cacheHitTokens: 0, latestInputTokens: 100, latestOutputTokens: 20 });
+    button('[data-side-tab="context"]').click();
+    expect(document.body.textContent).toContain("会话累计消耗（含子智能体）");
+    expect(document.body.textContent).toContain("主智能体最新读数（非整轮统计）");
+    const grids = [...document.querySelectorAll(".token-grid")];
+    expect(grids.some(grid => grid.textContent?.includes("✓ 缓存0"))).toBe(true);
+    button('[data-command="trajectory"]').click();
+    expect(sent).toContainEqual({ type: "command", command: "trajectory" });
+    button('[data-side-tab="messages"]').click();
+  });
+
+  it("shows removable context chips and sends attachments without changing the prompt", () => {
+    host({type:"addTextAttachment",attachment:{id:"selection",label:"app.ts:2-5",text:"@file app.ts:2-5\nsource"}});
+    expect(document.querySelector(".attachment-tray")?.textContent || document.body.textContent).toContain("app.ts:2-5");
+    host({type:"addTextAttachment",attachment:{id:"problems",label:"Problems (1)",text:"diagnostic"}});
+    button('[data-remove-context="1"]').click();
+    host({type:"setComposer",text:"Review this"});button(".send-btn").click();
+    expect(sent).toContainEqual(expect.objectContaining({type:"sendMessage",text:"Review this",attachments:[{id:"selection",label:"app.ts:2-5",text:"@file app.ts:2-5\nsource"}]}));
+    host({type:"appendMessage",message:{id:"context-user",kind:"user",text:"Review this",timestamp:2}});
+  });
   it("defaults to iCode and switches welcome branding without changing backend identity", () => {
     expect(document.querySelector(".welcome-logo")?.textContent).toBe("iCode");
     expect(document.querySelector(".welcome-mark")?.textContent).toBe("iC");
@@ -111,6 +132,16 @@ describe("chat webview interactions", () => {
     expect(sent.some(message => message.type === "sendMessage")).toBe(false);
   });
 
+  it("preserves preset arguments for root, selection and Problems commands", () => {
+    update();
+    const input=document.querySelector<HTMLTextAreaElement>("textarea.input-field")!;
+    for(const [text,command,arg] of [["/roots","changeWorkspace","roots"],["/selection","attachFile","selection"],["/问题","attachFile","problems"]]){
+      input.value=text;input.dispatchEvent(new Event("input",{bubbles:true}));
+      input.dispatchEvent(new KeyboardEvent("keydown",{key:"Enter",bubbles:true,cancelable:true}));
+      expect(sent).toContainEqual({type:"command",command,arg});
+    }
+    expect(sent.some(m=>m.type==="sendMessage")).toBe(false);
+  });
   it("sends the original prompt after connection becomes ready", () => {
     update();
     const input = document.querySelector<HTMLTextAreaElement>("textarea.input-field")!;
@@ -120,14 +151,38 @@ describe("chat webview interactions", () => {
     expect(sent).toContainEqual(expect.objectContaining({ type: "sendMessage", text: "保留原样：\n第二行 <agent>" }));
   });
 
+  it.each(["$", "＄"])("opens model selection for %s without sending a prompt", (trigger) => {
+    vi.advanceTimersByTime(500);
+    update();
+    const input = document.querySelector<HTMLTextAreaElement>("textarea.input-field")!;
+    input.value = trigger;
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    expect(sent).toContainEqual({ type: "command", command: "setModelProfile" });
+    expect(sent.some(message => message.type === "sendMessage")).toBe(false);
+  });
+
   it("can create and open other sessions while a turn is running", () => {
     update({ sessionId: "running-session", sessionState: "running" });
+    expect(button(".new-btn").disabled).toBe(true);
     button(".new-btn").click();
+    expect(sent).not.toContainEqual(expect.objectContaining({ type: "command", command: "clearChat" }));
+    const input = document.querySelector<HTMLTextAreaElement>("textarea.input-field")!;
+    input.value = "/new";
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
     expect(sent).toContainEqual(expect.objectContaining({ type: "command", command: "newSession" }));
     button('[data-side-tab="sessions"]').click();
     host({ type: "sessionsSidebarState", state: { status: "ready", sessions: [{ sessionId: "other-session", cwd: "/workspace", title: "Other" }] } });
     button('[data-sessions-action="resumeSession"]').click();
     expect(sent).toContainEqual(expect.objectContaining({ type: "sessionsSidebarAction", action: "resumeSession", id: "other-session" }));
+  });
+
+  it("clears only the current view with its New button", () => {
+    update({ sessionId: "existing-session", sessionState: "idle" });
+    expect(button(".new-btn").title).toContain("保留会话上下文");
+    button(".new-btn").click();
+    expect(sent).toContainEqual(expect.objectContaining({ type: "command", command: "clearChat" }));
+    expect(sent).not.toContainEqual(expect.objectContaining({ type: "command", command: "newSession" }));
   });
 
   it("loads sessions in the dashboard and sends resume actions", () => {

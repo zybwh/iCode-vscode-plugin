@@ -17,7 +17,7 @@ vi.mock("vscode", () => ({
   Uri: { file: (fsPath: string) => ({ fsPath }) },
 }));
 
-import { pickWorkspaceDirectory } from "../ui/workspacePicker";
+import { pickWorkspaceDirectory, pickAdditionalDirectories } from "../ui/workspacePicker";
 
 describe("workspace directory picker", () => {
   beforeEach(() => {
@@ -29,6 +29,17 @@ describe("workspace directory picker", () => {
     ];
   });
 
+  it("grants only explicitly selected extra roots and can clear or cancel", async () => {
+    host.quickPick.mockImplementationOnce(async items => {
+      expect(items.some((item: {directory:string})=>item.directory==="/project/api")).toBe(false);
+      expect(items[0].picked).toBe(false);
+      return [items[0]];
+    });
+    expect(await pickAdditionalDirectories("/project/api",[])).toEqual(["/project/ui"]);
+    host.quickPick.mockResolvedValueOnce([]);
+    expect(await pickAdditionalDirectories("/project/api",["/project/ui"])).toEqual([]);
+    expect(await pickAdditionalDirectories("/project/api",["/project/ui"])).toBeUndefined();
+  });
   it("selects the second workspace root by its actual path and marks the current root", async () => {
     host.quickPick.mockImplementation(async items => {
       expect(items[0]).toMatchObject({ label: "API", detail: "/project/api", description: "Current directory" });

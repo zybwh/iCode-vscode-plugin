@@ -4,6 +4,13 @@ on:
   pull_request:
     branches: [main]
   workflow_call:
+    inputs:
+      ref:
+        type: string
+        default: ''
+      runtime_tag:
+        type: string
+        default: v0.28.0
 
 concurrency:
   group: ci-${{ github.ref }}-${{ github.workflow }}
@@ -25,6 +32,8 @@ jobs:
             runner: windows-latest
     steps:
       - uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.ref || github.sha }}
       - uses: actions/setup-node@v6
         with:
           node-version: "22"
@@ -54,3 +63,39 @@ jobs:
           name: icode-vscode-plugin-${{ matrix.os }}
           path: icode-vscode-plugin-*.vsix
           retention-days: 7
+
+  runtime-compatibility:
+    name: Public iCode ACP compatibility
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+          cache: npm
+      - run: npm ci
+      - name: Download pinned public release (CI only)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ICODE_RELEASE_TAG: ${{ inputs.runtime_tag || 'v0.28.0' }}
+        run: |
+          mkdir -p runtime-download runtime-extracted
+          [[ "$ICODE_RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          gh release download "$ICODE_RELEASE_TAG" --repo openJiuwen-ai/iCode --pattern "icode-linux-x86_64-$ICODE_RELEASE_TAG-offline.tar.gz" --pattern SHA256SUMS.txt --dir runtime-download
+          cd runtime-download
+          grep -F "  icode-linux-x86_64-$ICODE_RELEASE_TAG-offline.tar.gz" SHA256SUMS.txt > selected.sha256
+          test -s selected.sha256
+          sha256sum --check selected.sha256
+          tar -xzf "icode-linux-x86_64-$ICODE_RELEASE_TAG-offline.tar.gz" -C ../runtime-extracted
+      - name: ACP integration with the public binary
+        env:
+          ICODE_RELEASE_TAG: ${{ inputs.runtime_tag || 'v0.28.0' }}
+        run: |
+          binary="$(find "$PWD/runtime-extracted" -type f -name icode -print -quit)"
+          test -n "$binary"
+          chmod +x "$binary"
+          ICODE_EXPECTED_VERSION="${ICODE_RELEASE_TAG#v}" ICODE_BINARY_PATH="$binary" npm run test:integration

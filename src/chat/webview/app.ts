@@ -1,3 +1,4 @@
+import type { TextAttachment } from "../../context/attachments";
 // iCode Chat Webview — frontend script
 // Bundled with esbuild (IIFE, browser target). Communicates with VS Code host via postMessage.
 
@@ -17,7 +18,7 @@ import type {
   ChatPanelState,
   ChatSessionsSidebarState,
 } from "../panel";
-import { el, formatDurationMs, formatClock, tokenValue, tokenValueOrDash, formatJson, shortSessionId, formatCountLabel } from "./helpers";
+import { el, formatDurationMs, formatClock, tokenValueOrDash, formatJson, shortSessionId, formatCountLabel } from "./helpers";
 import { renderMarkdown } from "./renderer";
 import { shellCommandFromPrompt } from "./shellPrompt";
 import { processThinkTags } from "./thinkTags";
@@ -127,7 +128,7 @@ let welcomeTimer: number | undefined;
 
 type TextKey =
   | "messages" | "context" | "debug" | "companion" | "emptyConversation" | "typeMessage"
-  | "agentsHint" | "shellHint" | "commandsHint" | "filesHint" | "send" | "interrupt" | "queued" | "queueMessage" | "continue"
+  | "agentsHint" | "modelsHint" | "shellHint" | "commandsHint" | "filesHint" | "send" | "interrupt" | "queued" | "queueMessage" | "continue"
   | "new" | "sessions" | "agents" | "models" | "logs" | "notifications" | "sessionJson" | "sidebar" | "themes" | "quit" | "refresh" | "close"
   | "reconnecting" | "thinking" | "openingModels" | "openingModelPicker" | "openingAgents" | "openingSessions"
   | "openingLogs" | "openingTools" | "openingFiles" | "openingShell" | "openingDiagnostics" | "openingDoctor"
@@ -160,6 +161,7 @@ const TEXT: Record<UiLanguage, Record<TextKey, string>> = {
     emptyConversation: "Your conversation will appear here",
     typeMessage: "Type a message",
     agentsHint: "# Agents",
+    modelsHint: "$ Models",
     shellHint: "! Shell",
     commandsHint: "/ Commands",
     filesHint: "@ Files",
@@ -275,6 +277,7 @@ const TEXT: Record<UiLanguage, Record<TextKey, string>> = {
     emptyConversation: "你的对话会显示在这里",
     typeMessage: "输入消息",
     agentsHint: "# 智能体",
+    modelsHint: "$ 模型",
     shellHint: "! 终端",
     commandsHint: "/ 命令",
     filesHint: "@ 文件",
@@ -405,6 +408,9 @@ const SLASH_ZH: Record<string, { title: string; description: string }> = {
   find: { title: "查找文件", description: "按文件名打开工作区文件" },
   mention: { title: "引用文件", description: "在输入框插入文件引用" },
   attach: { title: "附加文件", description: "把工作区文件内容附加到输入框" },
+  roots: { title: "目录范围", description: "显式选择额外工作目录" },
+  selection: { title: "附加选区", description: "附加编辑器选区与行号" },
+  problems: { title: "附加问题", description: "附加编辑器诊断信息" },
   cd: { title: "工作区", description: "切换当前会话工作区目录" },
   logs: { title: "日志", description: "查看 VSIX 和 ACP 前端日志" },
   debug: { title: "调试事件", description: "查看最近前端事件通知" },
@@ -412,7 +418,7 @@ const SLASH_ZH: Record<string, { title: string; description: string }> = {
   history: { title: "会话 JSON", description: "查看结构化会话历史" },
   shell: { title: "终端", description: "打开工作区终端，或运行 /shell <命令>" },
   diff: { title: "差异", description: "查看会话中的文件改动" },
-  rollback: { title: "回滚", description: "回滚会话文件改动" },
+  rollback: { title: "回滚", description: "按最近轮数或保留轮次预览并确认回滚" },
   approval: { title: "审批", description: "设置工具审批模式" },
   reload: { title: "重载设置", description: "重载 iCode 设置" },
   mcptest: { title: "测试 MCP", description: "测试 HTTP MCP 服务器" },
@@ -420,6 +426,8 @@ const SLASH_ZH: Record<string, { title: string; description: string }> = {
   theme: { title: "主题", description: "选择与 TUI 对齐的主题" },
   diagnostics: { title: "诊断报告", description: "打开 VSIX/ACP 诊断报告" },
   support: { title: "支持快照", description: "复制可分享的 VSIX/TUI 排查快照" },
+  trajectory: { title: "用量与执行轨迹", description: "查看历史用量、耗时和时间线，或导出分析" },
+  workflow: { title: "工作流", description: "选择并运行 CLI 工作流，查看结果或取消运行" },
   doctor: { title: "健康检查", description: "检查 VSIX/ACP 状态并提供修复入口" },
   notifications: { title: "通知", description: "查看最近前端通知" },
   clear: { title: "清空显示", description: "仅清空显示，保留会话上下文；新上下文请用 /new" },
@@ -482,6 +490,8 @@ const HOST_COMMANDS = new Set<ChatCommand>([
   "manageAgents",
   "diagnostics",
   "copySupportBundle",
+  "trajectory",
+  "workflows",
   "doctor",
   "companionCommand",
   "summonCompanion",
@@ -523,6 +533,7 @@ type ImagePreparationItem = {
 
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
 let pendingImages: PendingImage[] = [];
+let pendingAttachments: TextAttachment[] = [];
 let preparingImageCount = 0;
 let imagePreparationItems: ImagePreparationItem[] = [];
 let nextImagePreparationId = 1;
@@ -615,20 +626,25 @@ const SLASH_DEFINITIONS: SlashDefinition[] = [
   { names: ["grep"], zhNames: ["检索"], title: "Grep workspace", description: "Show matching lines in a Quick Pick list", action: { kind: "host", command: "grepWorkspace" }, allowWhileRunning: true, argHint: "QUERY", examples: ["/grep approval", "/grep WorkspaceGrep"], zhExamples: ["/检索 审批", "/检索 WorkspaceGrep"] },
   { names: ["find", "open"], zhNames: ["查找", "打开"], title: "Find file", description: "Open a workspace file by name", action: { kind: "host", command: "findWorkspaceFile" }, allowWhileRunning: true, argHint: "FILE", examples: ["/find sessionTree", "/open package.json"], zhExamples: ["/查找 sessionTree", "/打开 package.json"] },
   { names: ["mention"], zhNames: ["引用"], title: "Mention file", description: "Insert a file mention", action: { kind: "host", command: "insertFileMention" }, allowWhileRunning: true },
+  { names: ["selection"], zhNames:["选区"], title:"Attach selection", description:"Attach editor selection with line numbers", action:{kind:"host",command:"attachFile",arg:"selection"}},
+  { names: ["problems"], zhNames:["问题"], title:"Attach Problems", description:"Attach editor diagnostics", action:{kind:"host",command:"attachFile",arg:"problems"}},
   { names: ["attach"], zhNames: ["附加"], title: "Attach file", description: "Attach workspace file content", action: { kind: "host", command: "attachFile" } },
+  { names: ["roots"], zhNames: ["目录范围"], title: "Workspace roots", description: "Select additional workspace directories", action: { kind: "host", command: "changeWorkspace", arg: "roots" } },
   { names: ["cd", "cwd", "chdir", "workspace"], zhNames: ["工作区", "目录"], title: "Workspace", description: "Change workspace directory", action: { kind: "host", command: "changeWorkspace" }, argHint: "PATH" },
   { names: ["logs", "log"], zhNames: ["日志", "日志面板"], title: "Logs", description: "Show VSIX and ACP frontend logs", action: { kind: "host", command: "showLogs" }, allowWhileRunning: true },
   { names: ["debug"], zhNames: ["调试", "事件"], title: "Debug events", description: "Show recent frontend event notifications", action: { kind: "local", command: "notifications" }, allowWhileRunning: true },
   { names: ["debugcopy"], zhNames: ["调试快照", "复制调试"], title: "Copy debug snapshot", description: "Copy VSIX frontend state and recent events", action: { kind: "local", command: "copyDebugSnapshot" }, allowWhileRunning: true },
   { names: ["diagnostics", "diag"], zhNames: ["诊断", "诊断报告"], title: "Diagnostics", description: "Open a VSIX and ACP diagnostics report", action: { kind: "host", command: "diagnostics" }, allowWhileRunning: true },
   { names: ["support", "supportcopy"], zhNames: ["支持", "排查", "支持快照"], title: "Support bundle", description: "Copy a shareable VSIX/TUI mismatch support bundle", action: { kind: "host", command: "copySupportBundle" }, allowWhileRunning: true },
+  { names: ["trajectory", "usage"], zhNames: ["轨迹", "用量"], title: "Usage & Trajectory", description: "View historical usage and timelines or export analysis", action: { kind: "host", command: "trajectory" }, allowWhileRunning: true },
+  { names: ["workflow", "workflows"], zhNames: ["工作流"], title: "Workflow", description: "Choose and run CLI workflows, view results or cancel", action: { kind: "host", command: "workflows" }, allowWhileRunning: true },
   { names: ["doctor", "health"], zhNames: ["健康检查", "doctor"], title: "Doctor", description: "Check iCode VSIX and ACP health", action: { kind: "host", command: "doctor" }, allowWhileRunning: true },
   { names: ["rename"], zhNames: ["改名"], title: "Local Session Name", description: "Name this session in VS Code only; TUI title stays unchanged", action: { kind: "host", command: "renameSession" }, allowWhileRunning: true, argHint: "TITLE" },
   { names: ["prompts"], zhNames: ["历史输入"], title: "Prompt History", description: "Search and reuse prompts without sending (Ctrl+R)", action: { kind: "host", command: "showPromptHistory" }, allowWhileRunning: true },
   { names: ["history", "json"], zhNames: ["会话json", "历史"], title: "Session JSON", description: "Show structured session history", action: { kind: "host", command: "showStructuredHistory" } },
   { names: ["shell", "terminal"], zhNames: ["终端", "shell"], title: "Shell", description: "Open a terminal or run a command in the workspace", action: { kind: "host", command: "openShell" }, argHint: "COMMAND", examples: ["/shell", "/shell npm test"], zhExamples: ["/终端", "/终端 npm test"] },
   { names: ["diff"], zhNames: ["差异"], title: "Diff", description: "Show session file changes", action: { kind: "host", command: "showDiff" }, allowWhileRunning: true },
-  { names: ["rollback"], zhNames: ["回滚"], title: "Rollback", description: "Roll back session file changes", action: { kind: "host", command: "rollback" }, argHint: "[TURN] [revert]" },
+  { names: ["rollback"], zhNames: ["回滚"], title: "Rollback", description: "Preview and confirm rollback by count or retained turn", action: { kind: "host", command: "rollback" }, argHint: "[last N | to N] [revert]", examples:["/rollback last 2","/rollback to 2 revert"], zhExamples:["/回滚 last 2","/回滚 to 2 revert"] },
   {
     names: ["approval"],
     zhNames: ["审批"],
@@ -697,12 +713,14 @@ const SLASH_DEFINITIONS: SlashDefinition[] = [
 
 type PersistedWebviewState = {
   promptHistory?: string[];
+  attachments?: TextAttachment[];
   debugEvents?: DebugEvent[];
   sidebarPreference?: SidebarPreference;
   activeSideTab?: string;
 };
 
 const persistedWebviewState = (vscode.getState() ?? {}) as PersistedWebviewState;
+pendingAttachments = (persistedWebviewState.attachments ?? []).slice(0,20);
 let sidebarPreference = normalizeSidebarPreference(persistedWebviewState.sidebarPreference);
 let sessionsSidebarState: ChatSessionsSidebarState = { status: "idle", sessions: [] };
 let lastSessionsRequestAt = 0;
@@ -854,13 +872,14 @@ const inputBar = el("div", { class: "input-bar" },
     el("textarea", { class: "input-field", placeholder: t("startingPlaceholder"), "aria-label": t("typeMessage"), rows: "1", disabled: "true" }),
     el("div", { class: "input-hints" },
       el("button", { class: "input-hint", "data-command": "switchAgent" }, t("agentsHint")),
+      el("button", { class: "input-hint", "data-command": "setModelProfile" }, t("modelsHint")),
       el("button", { class: "input-hint", "data-command": "openShell" }, t("shellHint")),
       el("button", { class: "input-hint", "data-local-command": "startSlashCommand" }, t("commandsHint")),
       el("button", { class: "input-hint", "data-command": "insertFileMention" }, t("filesHint")),
     ),
   ),
   el("button", { class: "send-btn", disabled: "true" }, t("send")),
-  el("button", { class: "new-btn", "data-command": "newSession", disabled: "true" }, t("new")),
+  el("button", { class: "new-btn", "data-command": "clearChat", disabled: "true" }, t("new")),
 );
 
 const thinkingIndicator = el("div", { class: "thinking-indicator hidden" },
@@ -1008,7 +1027,7 @@ function sendMessage(): void {
     showLocalNotice(t("preparingImages"));
     return;
   }
-  if (!text && !pendingImages.length) return;
+  if (!text && !pendingImages.length && !pendingAttachments.length) return;
   slashHelp.classList.add("hidden");
   if (text) {
     const command = slashCommand(text);
@@ -1071,6 +1090,11 @@ function sendMessage(): void {
     showImageUnsupportedDialog();
     return;
   }
+  if (pendingAttachments.length && state.currentSessionState !== "idle") {
+    showLocalNotice(state.uiLanguage === "zh-CN" ? "附件请在当前任务结束后发送。" : "Wait for the task to finish before sending attachments.");return;
+  }
+  const attachments = pendingAttachments;
+  pendingAttachments = [];
   const imagesToSend = pendingImages;
   pendingImages = [];
   if (state.currentSessionState === "idle") {
@@ -1094,7 +1118,7 @@ function sendMessage(): void {
       compressed: image.compressed,
     },
   }));
-  vscode.postMessage({ type: "sendMessage", text, images });
+  vscode.postMessage({ type: "sendMessage", text, images, attachments });
 }
 
 function handleSendButtonClick(): void {
@@ -1109,6 +1133,14 @@ function handleSingleCharacterTrigger(): void {
   if (state.inputTriggerPending || state.isComposingText) return;
   const rawValue = inputField.value;
   const value = rawValue.trim();
+  if (value === "$" || value === "＄") {
+    if (isAgentBusy()) return;
+    state.inputTriggerPending = true;
+    clearComposer();
+    vscode.postMessage({ type: "command", command: "setModelProfile" });
+    window.setTimeout(() => { state.inputTriggerPending = false; }, 500);
+    return;
+  }
   if (value === "!" || value === "！") {
     if (isAgentBusy()) {
       showShellDisabledWhileRunning();
@@ -1291,6 +1323,9 @@ document.addEventListener("pointerdown", (event) => {
 });
 
 attachmentTray.addEventListener("click", (event) => {
+  const context = event.target instanceof HTMLElement ? event.target.closest<HTMLElement>("[data-remove-context]") : null;
+  if(context){pendingAttachments.splice(Number(context.dataset.removeContext),1);renderPendingImages();updateComposerState();return;}
+
   const button = event.target instanceof HTMLElement ? event.target.closest<HTMLElement>("[data-remove-image-index]") : null;
   if (!button) return;
   const index = Number.parseInt(button.dataset.removeImageIndex || "", 10);
@@ -1594,6 +1629,10 @@ window.addEventListener("message", (e) => {
     case "setState":
       setState(msg.state);
       break;
+    case "addTextAttachment":
+      if(pendingAttachments.length < 20) pendingAttachments.push(msg.attachment);
+      renderPendingImages(); updateComposerState();
+      break;
     case "setComposer":
       setComposer(msg.text);
       break;
@@ -1792,10 +1831,14 @@ function refreshChromeText(): void {
     label.textContent = t("welcomeSubtitle");
   });
   inputBar.querySelector<HTMLElement>("[data-command='switchAgent'].input-hint")!.textContent = t("agentsHint");
+  inputBar.querySelector<HTMLElement>("[data-command='setModelProfile'].input-hint")!.textContent = t("modelsHint");
   inputBar.querySelector<HTMLElement>("[data-command='openShell'].input-hint")!.textContent = t("shellHint");
   inputBar.querySelector<HTMLElement>("[data-local-command='startSlashCommand'].input-hint")!.textContent = t("commandsHint");
   inputBar.querySelector<HTMLElement>("[data-command='insertFileMention'].input-hint")!.textContent = t("filesHint");
   newBtn.textContent = t("new");
+  newBtn.title = state.uiLanguage === "zh-CN"
+    ? "清空当前窗口显示，保留会话上下文；用 /new 打开独立新会话"
+    : "Clear this view; keep session context. Use /new for a separate new session.";
   const sessionLabel = sessionFrame.querySelector<HTMLElement>(".session-label");
   if (sessionLabel) sessionLabel.title = t("copySessionId");
   const sessionCwd = sessionFrame.querySelector<HTMLElement>(".session-cwd");
@@ -1902,8 +1945,8 @@ function setState(panelState: ChatPanelState): void {
     ? [panelState.sessionTitle, panelState.sessionId].filter(Boolean).join("\n")
     : "";
   sessionLabel.classList.toggle("hidden", !sessionShortId);
-  sessionCwdValue.textContent = panelState.workspacePath || "";
-  sessionCwd.title = panelState.workspacePath || t("changeWorkspace");
+  sessionCwdValue.textContent = (panelState.workspacePath || "") + (panelState.additionalDirectories?.length ? ` (+${panelState.additionalDirectories.length})` : "");
+  sessionCwd.title = [panelState.workspacePath, ...(panelState.additionalDirectories ?? [])].filter(Boolean).join("\n");
   const welcomeWorkspace = messageArea.querySelector(".workspace-path");
   if (welcomeWorkspace) {
     welcomeWorkspace.textContent = panelState.workspacePath || "";
@@ -1943,7 +1986,7 @@ function setState(panelState: ChatPanelState): void {
     button.disabled = !runtimeReady;
   });
   newBtn.classList.remove("hidden");
-  newBtn.disabled = !runtimeReady;
+  newBtn.disabled = !runtimeReady || isAgentBusy();
   thinkingIndicator.classList.toggle("hidden", panelState.sessionState === "idle");
   const thinkingText = thinkingIndicator.querySelector<HTMLElement>(".thinking-label");
   if (thinkingText) {
@@ -2388,15 +2431,27 @@ function renderContextSidebar(): void {
       : hasUsage
         ? `${formatCount(used)} token`
         : contextEmpty),
+    el("div", { class: "context-usage-note" }, zh ? "ACP 最新上下文读数，可能包含后端估算；不是会话累计消耗。" : "Latest ACP context reading; may include backend estimates. Not cumulative spend."),
     renderUsageSparkline(),
     renderCompactionStatus(),
-    el("div", { class: "context-title token-title" }, zh ? "Token 用量" : "Token Usage"),
+    el("div", { class: "context-title token-title" }, zh ? "会话累计消耗（含子智能体）" : "Session spend (including sub-agents)"),
     el("div", { class: "token-grid" },
-      el("span", {}, zh ? "✓ 缓存" : "✓ Cached"), el("span", {}, tokenValueOrDash(panelState?.cacheHitTokens, panelState?.totalTokens ?? used)),
-      el("span", {}, zh ? "↑ 输入" : "↑ Input"), el("span", {}, tokenValueOrDash(panelState?.inputTokens, panelState?.totalTokens ?? used)),
-      el("span", {}, zh ? "↓ 输出" : "↓ Output"), el("span", {}, tokenValueOrDash(panelState?.outputTokens, panelState?.totalTokens ?? used)),
-      el("span", {}, zh ? "Σ 总计" : "Σ Total"), el("span", {}, tokenValue(panelState?.totalTokens ?? used)),
+      el("span", {}, zh ? "✓ 缓存" : "✓ Cached"), el("span", {}, tokenValueOrDash(panelState?.cacheHitTokens)),
+      el("span", {}, zh ? "↑ 输入" : "↑ Input"), el("span", {}, tokenValueOrDash(panelState?.inputTokens)),
+      el("span", {}, zh ? "↓ 输出" : "↓ Output"), el("span", {}, tokenValueOrDash(panelState?.outputTokens)),
+      el("span", {}, zh ? "Σ 总计" : "Σ Total"), el("span", {}, tokenValueOrDash(panelState?.totalTokens)),
     ),
+    el("div", { class: "context-title token-title" }, zh ? "主智能体最新读数（非整轮统计）" : "Latest main-agent reading (not a turn total)"),
+    el("div", { class: "token-grid" },
+      el("span", {}, zh ? "输入" : "Input"), el("span", {}, tokenValueOrDash(panelState?.latestInputTokens)),
+      el("span", {}, zh ? "输出" : "Output"), el("span", {}, tokenValueOrDash(panelState?.latestOutputTokens)),
+      el("span", {}, zh ? "缓存命中" : "Cache read"), el("span", {}, tokenValueOrDash(panelState?.latestCacheHitTokens)),
+      el("span", {}, zh ? "本地估算" : "Local estimate"), el("span", {}, tokenValueOrDash(panelState?.localTokens)),
+      el("span", {}, zh ? "校准系数" : "Calibration ratio"), el("span", {}, panelState?.calibrationRatio === undefined ? "—" : String(panelState.calibrationRatio)),
+      el("span", {}, zh ? "系统开销估算" : "System overhead estimate"), el("span", {}, tokenValueOrDash(panelState?.systemOverheadTokens)),
+    ),
+    el("div", { class: "context-usage-note" }, zh ? "— 表示未上报，0 表示已上报零值。推理/缓存写入和逐轮统计请查看轨迹。" : "— means not reported; 0 is a reported zero. See Trajectory for reasoning/cache-write and per-turn usage."),
+    el("button", { class: "secondary-btn", "data-command": "trajectory" }, zh ? "查看历史用量与轨迹" : "Historical usage & trajectory"),
     el("div", { class: "context-title capability-title" }, t("capabilities")),
     renderCapabilityDashboard(panelState),
     el("div", { class: "context-title compressed-title" }, zh ? "压缩历史" : "Compressed Messages"),
@@ -2501,6 +2556,7 @@ function addDebugEvent(kind: string, detail: string, relayToHost = true): void {
 
 function persistWebviewDiagnosticsState(selectedTab = activeSideTab()): void {
   vscode.setState({
+    attachments: pendingAttachments,
     promptHistory: state.promptHistory.slice(-100),
     debugEvents: state.debugEvents.slice(-200),
     sidebarPreference,
@@ -2805,7 +2861,7 @@ async function attachImageFiles(files: File[]): Promise<void> {
 
 function renderPendingImages(): void {
   attachmentTray.innerHTML = "";
-  attachmentTray.classList.toggle("hidden", pendingImages.length === 0 && preparingImageCount === 0);
+  attachmentTray.classList.toggle("hidden", pendingImages.length === 0 && pendingAttachments.length === 0 && preparingImageCount === 0);
   attachmentTray.setAttribute("role", "status");
   attachmentTray.setAttribute("aria-live", "polite");
   attachmentTray.title = attachmentTraySummary();
@@ -2827,6 +2883,7 @@ function renderPendingImages(): void {
       ),
     ));
   }
+  attachmentTray.append(...pendingAttachments.map((item,index)=>el("div",{class:"attachment-chip",title:item.text.slice(0,2000)},el("span",{class:"attachment-chip-name"},item.label),el("button",{type:"button",class:"attachment-chip-remove","data-remove-context":String(index),"aria-label":`${state.uiLanguage==="zh-CN"?"移除":"Remove"} ${item.label}`},"×"))));
   attachmentTray.append(...pendingImages.map((image, index) => {
     const meta = [image.mimeType, imageSizeMeta(image), image.compressed ? t("imageCompressed") : ""]
       .filter(Boolean)
@@ -3182,7 +3239,7 @@ function slashAction(definition: SlashDefinition, arg?: string): SlashCommand {
     return { kind: "host", command: "setApprovalMode", arg: "__cycle" };
   }
   if (definition.action.kind === "host") {
-    return { kind: "host", command: definition.action.command, arg: arg || undefined };
+    return { kind: "host", command: definition.action.command, arg: definition.action.arg ?? (arg || undefined) };
   }
   return { kind: "local", command: definition.action.command, arg: arg || undefined };
 }
@@ -3989,13 +4046,15 @@ function clearComposer(): void {
 }
 
 function updateComposerState(): void {
+  const saved = (vscode.getState() ?? {}) as Record<string,unknown>;
+  vscode.setState({...saved,attachments:pendingAttachments});
   vscode.postMessage({ type: "composerDraft", text: inputField.value });
-  inputBar.classList.toggle("has-text", inputField.value.length > 0 || pendingImages.length > 0 || preparingImageCount > 0);
+  inputBar.classList.toggle("has-text", inputField.value.length > 0 || pendingImages.length > 0 || pendingAttachments.length > 0 || preparingImageCount > 0);
   updateSendButtonState();
 }
 
 function updateSendButtonState(): void {
-  const hasText = inputField.value.trim().length > 0 || pendingImages.length > 0;
+  const hasText = inputField.value.trim().length > 0 || pendingImages.length > 0 || pendingAttachments.length > 0;
   const isBusy = state.currentSessionState !== "idle";
   const runtimeReady = connectionReady(state.latestState);
   sendBtn.disabled = !runtimeReady || preparingImageCount > 0 || state.queuedInjectionPending || (!hasText && !isBusy);
@@ -4027,6 +4086,7 @@ type HostMessage =
   | { type: "clearMessages" }
   | { type: "setState"; state: ChatPanelState }
   | { type: "setComposer"; text: string }
+  | { type: "addTextAttachment"; attachment: TextAttachment }
   | { type: "reconnectNotice" }
   | { type: "debugEvent"; kind: string; detail: string }
   | { type: "localCommand"; command: "notifications" }

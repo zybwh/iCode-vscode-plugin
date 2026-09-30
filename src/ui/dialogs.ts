@@ -1,3 +1,5 @@
+import { attachment, editorAttachment, problemsAttachment } from "../context/attachments";
+import { openChanges } from "./changes";
 import { withLocalSessionNames } from "../session/localNames";
 import { restartBackendConnection } from "../extension";
 import { agentSelectionTarget, workspaceSelectionTarget } from "../session/selectionTarget";
@@ -6,7 +8,7 @@ import * as path from "node:path";
 import * as os from "node:os";
 import * as fs from "node:fs";
 import { rt, type ToolSnapshot } from "../state/runtime";
-import { pickWorkspaceDirectory } from "./workspacePicker";
+import { pickWorkspaceDirectory, pickAdditionalDirectories } from "./workspacePicker";
 import { nextMessageId } from "../chat/provider";
 import type { ChatInlineDialogState } from "../chat/panel";
 import { formatCount } from "../common/utils";
@@ -17,7 +19,6 @@ import { toolRendererCoverage } from "../common/toolRendering";
 import { resolveUiLanguage } from "../common/i18n";
 import { SUPPORTED_UI_THEME_IDS, isSupportedUiTheme, resolveUiTheme, type UiTheme } from "../common/uiTheme";
 import { findSessionJsonPath } from "../common/sessionFiles";
-import { formatDiffRiskDetail } from "../common/provenanceDisplay";
 import { diffFromSnapshot } from "../handlers/session";
 import { refreshRuntimeSnapshot } from "../handlers/notifications";
 import { agentProfileMutation } from "../chat/agentProfileEdit";
@@ -620,68 +621,7 @@ export async function handleInlineDialogAction(
 // ──────────────────────────────────────────────
 
 export async function showSessionDiff(): Promise<void> {
-  if (!rt.sessionManager) return;
-  const mutations = await rt.sessionManager.mutations();
-  if (!mutations.files.length) {
-    vscode.window.showInformationMessage(nativeText("No file mutations recorded for this session.", "这个会话没有记录到文件改动。"));
-    return;
-  }
-  const fileItems = mutations.files.map((file: { path: string; operation: string }) => ({
-    label: vscode.workspace.asRelativePath(file.path),
-    description: file.operation,
-    path: file.path,
-    all: false,
-  }));
-  const selected = await vscode.window.showQuickPick(
-    [
-      ...(fileItems.length > 1 ? [{
-        label: nativeText("$(diff-multiple) Open all changed files", "$(diff-multiple) 打开全部变更文件"),
-        description: nativeText(`${fileItems.length} file(s)`, `${fileItems.length} 个文件`),
-        detail: nativeText("Open every non-binary iCode diff in VS Code diff editors.", "在 VS Code diff 编辑器中打开所有非二进制 iCode 差异。"),
-        path: "",
-        all: true,
-      }] : []),
-      ...fileItems,
-    ],
-    { placeHolder: nativeText("Select iCode changes to inspect", "选择要查看的 iCode 变更") },
-  );
-  if (!selected) return;
-  if (selected.all) {
-    const diff = await rt.sessionManager.diff();
-    const result = await openDiffEntries(diff.entries, "iCode Diff");
-    rt.chatPanel?.appendDebugEvent("DiffOpened", `all (${result.opened}/${diff.entries.length})`);
-    if (result.opened === 0) {
-      vscode.window.showInformationMessage(nativeText("No text diffs are available to open.", "没有可打开的文本差异。"));
-    } else if (result.skippedBinary > 0) {
-      vscode.window.showInformationMessage(nativeText(
-        `Opened ${result.opened} diff(s); skipped ${result.skippedBinary} binary file(s).`,
-        `已打开 ${result.opened} 个差异；跳过 ${result.skippedBinary} 个二进制文件。`,
-      ));
-    }
-    return;
-  }
-  const diff = await rt.sessionManager.diff(selected.path);
-  const entry = diff.entries.find((item: { path: string }) => item.path === selected.path);
-  if (!entry) {
-    vscode.window.showInformationMessage(nativeText("No diff is available for that file.", "这个文件没有可用差异。"));
-    return;
-  }
-  await openDiffEntry(entry, "iCode Diff");
-  rt.chatPanel?.appendDebugEvent("DiffOpened", vscode.workspace.asRelativePath(entry.path));
-}
-
-async function openDiffEntries(entries: DiffEntry[], titlePrefix: string): Promise<{ opened: number; skippedBinary: number }> {
-  let opened = 0;
-  let skippedBinary = 0;
-  for (const entry of entries) {
-    if (entry.isBinary) {
-      skippedBinary += 1;
-      continue;
-    }
-    await openDiffEntry(entry, titlePrefix);
-    opened += 1;
-  }
-  return { opened, skippedBinary };
+  await openChanges(false, undefined, openDiffEntry);
 }
 
 async function openDiffEntry(entry: DiffEntry, titlePrefix: string): Promise<boolean> {
@@ -700,139 +640,7 @@ async function openDiffEntry(entry: DiffEntry, titlePrefix: string): Promise<boo
 }
 
 export async function rollbackSession(arg?: string): Promise<void> {
-  if (!rt.sessionManager || !rt.chatPanel) return;
-  if (rt.sessionManager.state !== "idle") {
-    vscode.window.showWarningMessage(nativeText(
-      "iCode cannot roll back while the current task is running. Interrupt or wait for it to finish.",
-      "当前任务运行时不能执行 iCode 回滚。请先中断或等待任务完成。",
-    ));
-    rt.chatPanel?.appendDebugEvent("RollbackBlocked", rt.sessionManager.state);
-    return;
-  }
-  const mutations = await rt.sessionManager.mutations();
-  if (!mutations.availableRollbackTurns || !mutations.availableRollbackTurns.length) {
-    vscode.window.showInformationMessage(nativeText("No rollback turns are available for this session.", "这个会话没有可回滚的轮次。"));
-    return;
-  }
-  const rollbackArg = parseRollbackArg(arg);
-  if (rollbackArg.turn !== undefined && !mutations.availableRollbackTurns.includes(rollbackArg.turn)) {
-    vscode.window.showWarningMessage(nativeText(
-      `Turn ${rollbackArg.turn} is not available for rollback. Available: ${mutations.availableRollbackTurns.join(", ")}`,
-      `第 ${rollbackArg.turn} 轮不可回滚。可用轮次：${mutations.availableRollbackTurns.join(", ")}`,
-    ));
-    return;
-  }
-  const selected = rollbackArg.turn !== undefined
-    ? rollbackTurnItem(rollbackArg.turn, mutations.currentTurn)
-    : await vscode.window.showQuickPick(
-      [...mutations.availableRollbackTurns]
-        .sort((a: number, b: number) => b - a)
-        .map((turn: number) => rollbackTurnItem(turn, mutations.currentTurn)),
-      { placeHolder: nativeText("Roll back conversation to which turn?", "要把对话回滚到哪一轮？") },
-    );
-  if (!selected) return;
-  if (rollbackArg.revertShortcut) {
-    rt.chatPanel?.appendDebugEvent("RollbackRequested", `turn=${selected.turn}, files=all (slash shortcut)`);
-    await rt.sessionManager.rollback(selected.turn, true);
-    rt.chatPanel?.setState(chatPanelState());
-    return;
-  }
-  const conversationOnly = nativeText("Conversation only", "仅对话");
-  const conversationAndFiles = nativeText("Conversation and files", "对话和文件");
-  const revert = await vscode.window.showWarningMessage(
-    nativeText(`Roll back to ${selected.label}?`, `回滚到 ${selected.label}？`),
-    { modal: true, detail: nativeText("Choose whether to also revert file changes recorded after that turn.", "请选择是否同时还原该轮之后记录到的文件改动。") },
-    conversationOnly,
-    conversationAndFiles,
-  );
-  if (!revert) return;
-  let selectedPaths: string[] | undefined;
-  let diffEntries: DiffEntry[] | undefined;
-  if (revert === conversationAndFiles) {
-    const diff = await rt.sessionManager.diff(undefined, selected.turn);
-    diffEntries = diff.entries;
-    if (diffEntries.length) {
-      const picked = await vscode.window.showQuickPick(
-        diffEntries.map((entry) => ({
-          label: vscode.workspace.asRelativePath(entry.path),
-          description: entry.operation,
-          detail: formatDiffRiskDetail(entry, currentUiLanguage()),
-          path: entry.path,
-          picked: true,
-        })),
-        {
-          canPickMany: true,
-          placeHolder: nativeText("Select files to revert", "选择要还原的文件"),
-          title: nativeText("iCode Rollback Files", "iCode 回滚文件"),
-        },
-      );
-      if (!picked) return;
-      selectedPaths = picked.map((item) => item.path);
-      if (!selectedPaths.length) {
-        vscode.window.showInformationMessage(nativeText("No files selected; rolling back conversation only.", "未选择文件，将只回滚对话。"));
-      }
-    }
-  }
-
-  // Diff preview: show before/after for selected files before executing rollback
-  if (selectedPaths && selectedPaths.length && diffEntries) {
-    const yesLabel = nativeText("Yes", "是");
-    const noLabel = nativeText("No", "否");
-    const showPreview = await vscode.window.showQuickPick(
-      [
-        { label: yesLabel, description: nativeText("Open diff views showing what will be reverted", "打开 diff 视图查看将被还原的内容") },
-        { label: noLabel, description: nativeText("Skip preview and proceed", "跳过预览并继续") },
-      ],
-      { placeHolder: nativeText("Show diff preview before rolling back?", "回滚前是否显示差异预览？") },
-    );
-    if (showPreview?.label === yesLabel) {
-      const entryMap = new Map(diffEntries.map((e) => [e.path, e]));
-      const previewEntries = selectedPaths.flatMap((filePath) => {
-        const entry = entryMap.get(filePath);
-        return entry ? [entry] : [];
-      });
-      const result = await openDiffEntries(previewEntries, "iCode Rollback Preview");
-      rt.chatPanel?.appendDebugEvent("RollbackPreviewOpened", `${result.opened}/${previewEntries.length}`);
-      if (result.opened === 0) vscode.window.showInformationMessage(nativeText("No text diffs are available to preview.", "没有可预览的文本差异。"));
-    }
-    const rollbackLabel = nativeText("Rollback", "回滚");
-    const proceed = await vscode.window.showWarningMessage(
-      nativeText(
-        `Proceed with rolling back ${selectedPaths.length} file(s) to ${selected.label}?`,
-        `确认将 ${selectedPaths.length} 个文件回滚到 ${selected.label}？`,
-      ),
-      { modal: true, detail: nativeText("This will revert file changes to their previous state.", "这会把文件改动还原到之前的状态。") },
-      rollbackLabel,
-    );
-    if (proceed !== rollbackLabel) return;
-  }
-
-  rt.chatPanel?.appendDebugEvent(
-    "RollbackRequested",
-    `turn=${selected.turn}, files=${revert === conversationAndFiles ? (selectedPaths?.length ?? "all") : 0}`,
-  );
-  await rt.sessionManager.rollback(
-    selected.turn,
-    revert === conversationAndFiles && (selectedPaths === undefined || selectedPaths.length > 0),
-    selectedPaths,
-  );
-  rt.chatPanel?.setState(chatPanelState());
-}
-
-function rollbackTurnItem(turn: number, currentTurn?: number): { label: string; description?: string; turn: number } {
-  return {
-    label: turn === 0 ? nativeText("Session start", "会话开始") : nativeText(`Turn ${turn}`, `第 ${turn} 轮`),
-    description: turn === currentTurn ? nativeText("current", "当前") : undefined,
-    turn,
-  };
-}
-
-function parseRollbackArg(arg?: string): { turn?: number; revertShortcut: boolean } {
-  const tokens = (arg || "").trim().toLowerCase().split(/\s+/).filter(Boolean);
-  if (!tokens.length) return { revertShortcut: false };
-  const turn = /^\d+$/.test(tokens[0]) ? Number.parseInt(tokens[0], 10) : undefined;
-  const revertShortcut = turn !== undefined && tokens.slice(1).some((token) => token === "revert" || token === "--revert" || token === "-r");
-  return { turn, revertShortcut };
+  await openChanges(true, arg, openDiffEntry);
 }
 
 // ──────────────────────────────────────────────
@@ -1121,6 +929,31 @@ export async function changeWorkspace(targetPath?: string): Promise<void> {
     rt.chatPanel?.appendDebugEvent("WorkspaceChangeBlocked", rt.sessionManager.state);
     return;
   }
+  if (targetPath?.trim() === "roots") {
+    if(!rt.supportsAdditionalDirectories){
+      vscode.window.showWarningMessage(nativeText("This iCode CLI does not advertise additional-directory support.","当前 iCode CLI 未声明支持额外工作目录。"));return;
+    }
+    if (!rt.currentCwd) return;
+    const roots = await pickAdditionalDirectories(rt.currentCwd, rt.additionalDirectories ?? []);
+    if (!roots || rt.sessionManager.state !== "idle") return;
+    const previous = rt.additionalDirectories;
+    rt.additionalDirectories = roots;
+    if (rt.currentSessionId && rt.extensionContext) {
+      const empty = (await rt.sessionManager.history()).messages.length === 0;
+      if (empty) { rt.clearPersistedSession(); rt.currentSessionId=null; rt.skipRestoreOnce=true; }
+      else rt.persistCurrentSession();
+      if (!(await restartBackendConnection(rt.extensionContext, rt.currentBinaryPath ?? undefined))) {
+        rt.additionalDirectories = previous;
+        return;
+      }
+      if(empty) {
+        rt.currentSessionId=await rt.sessionManager.newSession(rt.currentCwd, roots);
+        await refreshRuntimeSnapshot();rt.persistCurrentSession();
+      }
+    }
+    rt.chatPanel?.setState(chatPanelState());
+    return;
+  }
   const expandedTarget = expandWorkspacePath(targetPath);
   if (expandedTarget) {
     const uri = vscode.Uri.file(expandedTarget);
@@ -1155,6 +988,7 @@ async function applyWorkspaceChange(targetPath: string): Promise<void> {
   } else {
     const result = await rt.sessionManager!.setWorkspace(normalizedTarget);
     rt.currentCwd = result.primaryCwd ?? normalizedTarget;
+    if(result.workingDirs)rt.additionalDirectories=result.workingDirs.filter(p=>p!==rt.currentCwd);
   }
   rt.persistCurrentSession();
   rt.chatPanel?.setState(chatPanelState());
@@ -1409,16 +1243,11 @@ export async function openAgentDialog(): Promise<void> {
   if (!rt.chatPanel) return;
   logInfo("Opening inline Agents dialog.");
   rt.chatPanel?.reveal();
-  rt.chatPanel?.setAgentDialogState({
-    agents: [],
-    profiles: {},
-    activeAgentName: rt.activeAgentName || process.env.CHRYS_DEFAULT_AGENT || "",
-  });
   rt.chatPanel?.agentDialogNotice("info", nativeText("Loading agent profiles...", "正在加载智能体配置..."));
   await refreshAgentDialog();
 }
 
-export async function refreshAgentDialog(panel = rt.chatPanel): Promise<void> {
+export async function refreshAgentDialog(panel = rt.chatPanel, updatedAgentName?: string): Promise<void> {
   const sessionManager = rt.sessionManager;
   if (panel !== rt.chatPanel) return;
   if (!sessionManager || !panel) {
@@ -1436,6 +1265,7 @@ export async function refreshAgentDialog(panel = rt.chatPanel): Promise<void> {
     logInfo(`Loaded ${agents.length} agent profile(s).`);
     const state = {
       agents,
+      updatedAgentName,
       profiles: Object.fromEntries(profileEntries),
       activeAgentName: rt.activeAgentName || process.env.CHRYS_DEFAULT_AGENT || "",
     };
@@ -1468,7 +1298,7 @@ export async function saveAgentFromDialog(agent: Record<string, unknown>): Promi
         "智能体配置已保存。请在当前任务结束后重新加载设置以应用。",
       ));
     }
-    await refreshAgentDialog(panel);
+    await refreshAgentDialog(panel, String(agent.name));
   } catch (error) {
     agentDialogError(error, panel);
   } finally {
@@ -1531,7 +1361,7 @@ export async function deleteAgentFromDialog(name: string): Promise<void> {
         `未找到智能体配置 ${name}。`,
       ));
     }
-    await refreshAgentDialog(panel);
+    await refreshAgentDialog(panel, name);
   } catch (error) {
     agentDialogError(error, panel);
   } finally {
@@ -2624,7 +2454,7 @@ function toolRendererCoverageLines(): string[] {
 // File composer helpers
 // ──────────────────────────────────────────────
 
-export async function attachFileToComposer(): Promise<void> {
+export async function attachFileToComposer(arg?: string): Promise<void> {
   const panel = rt.chatPanel;
   if (!panel) return;
   if (rt.sessionManager && rt.sessionManager.state !== "idle") {
@@ -2635,6 +2465,19 @@ export async function attachFileToComposer(): Promise<void> {
     panel.appendDebugEvent("FileAttachBlocked", rt.sessionManager.state);
     return;
   }
+  const kind = arg?.trim() || (await vscode.window.showQuickPick([
+    {label:nativeText("File", "文件"),sourceKind:"file"},
+    {label:nativeText("Editor selection / cursor context", "编辑器选区 / 光标上下文"),sourceKind:"selection"},
+    {label:nativeText("Problems", "问题诊断"),sourceKind:"problems"},
+  ], {title:nativeText("Attach context", "附加上下文")}))?.sourceKind;
+  if (!kind) return;
+  if (kind === "selection") {
+    const item=editorAttachment();
+    if(item)panel.addTextAttachment(item);
+    else vscode.window.showInformationMessage(nativeText("Select a text editor first.","请先选择文本编辑器。"));
+    return;
+  }
+  if (kind === "problems") {panel.addTextAttachment(problemsAttachment());return;}
   const selected = await vscode.window.showOpenDialog({
     canSelectFiles: true,
     canSelectFolders: false,
@@ -2654,10 +2497,7 @@ export async function attachFileToComposer(): Promise<void> {
   const suffix = truncated
     ? nativeText(`\n\n[File truncated to ${maxBytes} bytes before sending.]`, `\n\n[发送前已将文件截断到 ${maxBytes} bytes。]`)
     : "";
-  panel.setComposer(nativeText(
-    `Please consider @file ${relativePath}\n\n\`\`\`${language}\n${text}\n\`\`\`${suffix}`,
-    `请参考 @file ${relativePath}\n\n\`\`\`${language}\n${text}\n\`\`\`${suffix}`,
-  ));
+  panel.addTextAttachment(attachment(relativePath + ":1-" + text.split("\n").length + (truncated ? " …" : ""), "@file " + relativePath + ":1-" + text.split("\n").length + "\n```" + language + "\n" + text + "\n```" + suffix));
   panel.appendDebugEvent(
     "FileAttached",
     `${relativePath} (${Math.min(bytes.byteLength, maxBytes)}/${bytes.byteLength} bytes${truncated ? ", truncated" : ""})`,

@@ -1,18 +1,38 @@
 [
   {
-    "name": "marked",
-    "version": "15.0.12",
+    "name": "beautiful-mermaid",
+    "version": "1.1.3",
     "license": "MIT",
-    "source": "https://github.com/markedjs/marked",
-    "file": "licenses/marked-LICENSE.txt",
-    "sha256": "8e3a3f82f59a60958f56ca08f445647c32a4733dc7ca6c2c46f6eb898471ab9c"
+    "source": "https://github.com/lukilabs/beautiful-mermaid",
+    "packagePath": "node_modules/beautiful-mermaid",
+    "upstreamFiles": [
+      "LICENSE"
+    ],
+    "file": "licenses/beautiful-mermaid-LICENSE.txt",
+    "sha256": "f05f5a4009eae7fadfd4a55f77ffe10948f621982d56076667e68afbb54de894"
   },
   {
     "name": "dompurify",
     "version": "3.4.5",
     "license": "Apache-2.0",
-    "source": "https://github.com/cure53/DOMPurify",
+    "source": "git://github.com/cure53/DOMPurify.git",
+    "packagePath": "node_modules/dompurify",
+    "upstreamFiles": [
+      "LICENSE"
+    ],
     "file": "licenses/dompurify-LICENSE.txt",
     "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+  },
+  {
+    "name": "marked",
+    "version": "15.0.12",
+    "license": "MIT",
+    "source": "git://github.com/markedjs/marked.git",
+    "packagePath": "node_modules/marked",
+    "upstreamFiles": [
+      "LICENSE.md"
+    ],
+    "file": "licenses/marked-LICENSE.txt",
+    "sha256": "8e3a3f82f59a60958f56ca08f445647c32a4733dc7ca6c2c46f6eb898471ab9c"
   }
 ]

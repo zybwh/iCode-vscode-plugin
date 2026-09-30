@@ -2,7 +2,7 @@
   "name": "icode-vscode-plugin",
   "displayName": "iCode",
   "description": "%extension.description%",
-  "version": "0.0.22",
+  "version": "0.0.23",
   "publisher": "icode",
   "license": "Apache-2.0",
   "repository": {
@@ -276,6 +276,24 @@
         "title": "%command.renameSession.title%",
         "category": "iCode",
         "icon": "$(edit)"
+      },
+      {
+        "command": "chrys.workflows",
+        "title": "%command.workflows.title%",
+        "category": "iCode",
+        "icon": "$(git-merge)"
+      },
+      {
+        "command": "chrys.trajectory",
+        "title": "%command.trajectory.title%",
+        "category": "iCode",
+        "icon": "$(graph)"
+      },
+      {
+        "command": "chrys.installRuntime",
+        "title": "%command.installRuntime.title%",
+        "category": "iCode",
+        "icon": "$(cloud-download)"
       }
     ],
     "viewsContainers": {
@@ -543,13 +561,15 @@
     "test:watch": "vitest",
     "lint": "tsc --noEmit && tsc --noEmit -p tsconfig.webview.json",
     "assets:clean-companion-fringe": "node scripts/clean_companion_fringe.mjs",
-    "package": "uv run python scripts/pack.py",
+    "package": "npm run build && uv run python scripts/pack.py",
     "deploy": "npm run package && '/Applications/openUBMC Studio.app/Contents/Resources/app/bin/studio' --install-extension icode-vscode-plugin-$npm_package_version.vsix --force && echo 'Deployed OK，重启 Studio 窗口生效'",
-    "test:packaging": "uv run python -m unittest discover -s tests/packaging"
+    "test:packaging": "uv run python -m unittest discover -s tests/packaging",
+    "test:runtime": "vitest run tests/integration -t \"Packaged runtime startup\""
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
     "@types/vscode": "^1.95.0",
+    "beautiful-mermaid": "^1.1.3",
     "dompurify": "^3.2.0",
     "esbuild": "^0.24.0",
     "jsdom": "^26.1.0",

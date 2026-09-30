@@ -7,6 +7,7 @@ import sys
 import tempfile
 import unittest
 import zipfile
+import xml.etree.ElementTree as ET
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -25,6 +26,7 @@ class LicensePackagingTests(unittest.TestCase):
         shutil.copytree(ROOT / "licenses", self.root / "licenses")
         (self.root / "dist").mkdir()
         for bundle, inputs in [("extension.js", {}), ("webview.js", {
+            "node_modules/beautiful-mermaid/src/ascii/index.ts": {},
             "node_modules/marked/lib/marked.esm.js": {},
             "node_modules/dompurify/dist/purify.es.mjs": {},
         })]:
@@ -41,7 +43,7 @@ class LicensePackagingTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         with zipfile.ZipFile(next(self.root.glob("*.vsix"))) as archive:
             for name in ["LICENSE", "NOTICE", "THIRD_PARTY_NOTICES.md", "ASSET_PROVENANCE.md",
-                         "licenses/components.json", "licenses/marked-LICENSE.txt", "licenses/dompurify-LICENSE.txt"]:
+                         "licenses/components.json", "licenses/beautiful-mermaid-LICENSE.txt", "licenses/marked-LICENSE.txt", "licenses/dompurify-LICENSE.txt"]:
                 self.assertEqual(archive.read(f"extension/{name}"), (ROOT / name).read_bytes())
             self.assertNotIn("extension/runtime", archive.namelist())
 
@@ -100,6 +102,9 @@ class LicensePackagingTests(unittest.TestCase):
         result = self.pack(*args)
         self.assertEqual(result.returncode, 0, result.stderr)
         with zipfile.ZipFile(next(self.root.glob("*-darwin-arm64.vsix"))) as archive:
+            identity = ET.fromstring(archive.read("extension.vsixmanifest")).find("{*}Metadata/{*}Identity")
+            self.assertEqual(identity.attrib["Id"], "icode.icode-vscode-plugin")
+            self.assertEqual(identity.attrib["Publisher"], "icode")
             for name in ["LICENSE", "NOTICE"]:
                 self.assertEqual(archive.read(f"extension/runtime-licenses/{name}").decode(), f"upstream {name}")
 

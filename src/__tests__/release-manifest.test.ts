@@ -68,6 +68,46 @@ function collectNlsKeys(value: unknown, keys = new Set<string>()): Set<string> {
 }
 
 describe("VSIX release manifest", () => {
+  it("keeps TUI parity surfaces on supported contracts with explicit context", () => {
+    expect(readSource("src/ui/changes.ts")).toContain("signature(await manager.mutations())");
+    expect(readSource("src/changes/view.ts")).toContain("split-preview");
+    expect(readSource("src/handlers/actions.ts")).not.toContain("collectEditorContext");
+    expect(readSource("src/state/runtime.ts")).toContain("additionalDirectories");
+    expect(readSource(".github/workflows/ci.yml")).toContain("sha256sum --check");
+    for(const document of ["README.md","DESIGN_DECISIONS.md","RELEASE_CHECKLIST.md"]){
+      expect(readSource(document)).toContain("/roots");
+      expect(readSource(document)).toContain("/rollback to ");
+    }
+  });
+  it("keeps trajectory analysis on the public export contract and preserves usage scope", () => {
+    expect(readSource("src/ui/trajectory.ts")).toContain('["trajectory", "export"');
+    expect(readSource("src/ui/trajectory.ts")).toContain("enableScripts: true");
+    expect(readSource("src/trajectory/report.ts")).toContain("Where time went");
+    expect(readSource("src/trajectory/report.ts")).not.toContain("<table");
+    expect(readSource("src/ui/trajectory.ts")).not.toContain('"--include-sensitive"');
+    expect(readSource("src/acp/client.ts")).not.toContain("_trajectory/");
+    expect(readSource("DESIGN_DECISIONS.md")).toContain("Never fall back between these scopes");
+    expect(readSource("README.md")).toContain("/usage");
+  });
+  it("keeps workflow execution on the supported CLI contract with explicit approval disclosure", () => {
+    expect(readSource("src/workflow/cli.ts")).toContain('["workflow", "run"');
+    expect(readSource("src/ui/workflows.ts")).toContain("BYPASS");
+    expect(readSource("src/ui/workflows.ts")).toContain("modal: true");
+    expect(readSource("README.md")).toContain("/workflow");
+    expect(readSource("src/acp/client.ts")).not.toContain("_workflow/");
+  });
+  it("keeps diagram presentation terminal-native without shipping the SVG engine", () => {
+    expect(readSource("DESIGN_DECISIONS.md")).toContain("automatic rendering only after a fence closes");
+    expect(readSource("esbuild.config.mjs")).toContain("beautiful-mermaid/src/ascii/index.ts");
+    expect(readSource("src/chat/webview/styles/theme.css")).not.toContain(".diagram-preview");
+  });
+  it("ships an honest product capability plan for workflow and trajectory gaps", () => {
+    expect(readSource("README.md")).toContain("[capability plan](./FEATURE_PARITY.md)");
+    expect(readSource("FEATURE_PARITY.md")).toContain("Workflow / 工作流");
+    expect(readSource("FEATURE_PARITY.md")).toContain("Trajectory / 执行轨迹");
+    expect(readSource("DESIGN_DECISIONS.md")).toContain("missing product surfaces");
+    expect(readSource("scripts", "pack.py")).toContain("extension/FEATURE_PARITY.md");
+  });
   it("keeps standalone VSIX agent guidance in the subproject", () => {
     const agentsPath = path.join(extensionRoot, "AGENTS.md");
     const agents = fs.readFileSync(agentsPath, "utf8");
@@ -100,7 +140,7 @@ describe("VSIX release manifest", () => {
     expect(packageJson.scripts).not.toHaveProperty("build:binary");
     expect(packageJson.scripts).not.toHaveProperty("package:bundle");
     expect(packageJson.scripts).not.toHaveProperty("package:full");
-    expect(packageJson.scripts.package).toBe("uv run python scripts/pack.py");
+    expect(packageJson.scripts.package).toBe("npm run build && uv run python scripts/pack.py");
     expect(packageJson.scripts.deploy).toBe("npm run package && '/Applications/openUBMC Studio.app/Contents/Resources/app/bin/studio' --install-extension icode-vscode-plugin-$npm_package_version.vsix --force && echo 'Deployed OK，重启 Studio 窗口生效'");
   });
 
@@ -177,11 +217,12 @@ describe("VSIX release manifest", () => {
   it("keeps bundled dependency licenses complete and unused signing tools out", () => {
     const lock = JSON.parse(readSource("package-lock.json"));
     expect(Object.keys(lock.packages).some(name => name.includes("@vscode/vsce"))).toBe(false);
-    const components = JSON.parse(readSource("licenses", "components.json")) as Array<{name: string; version: string; file: string}>;
+    const components = JSON.parse(readSource("licenses", "components.json")) as Array<{name: string; version: string; file: string; packagePath?: string; upstreamFiles?: string[]}>;
     for (const component of components) {
-      expect(lock.packages[`node_modules/${component.name}`].version).toBe(component.version);
-      const original = component.name === "marked" ? "LICENSE.md" : "LICENSE";
-      expect(readSource(component.file)).toBe(readSource("node_modules", component.name, original));
+      const packagePath = component.packagePath || `node_modules/${component.name}`;
+      expect(lock.packages[packagePath].version).toBe(component.version);
+      const originals = component.upstreamFiles || [component.name === "marked" ? "LICENSE.md" : "LICENSE"];
+      expect(readSource(component.file)).toBe(originals.map(file => readSource(packagePath, file)).join("\n\n"));
     }
     const provenance = readSource("ASSET_PROVENANCE.md");
     const assets = fs.readdirSync(path.join(extensionRoot, "src/chat/webview/assets/companions"));
@@ -198,8 +239,8 @@ describe("VSIX release manifest", () => {
     expect(readme).toContain("frontend for the iCode coding agent");
     expect(readme).toContain("universal VSIX");
     expect(readme).toContain("platform VSIX");
-    expect(readme).toContain("The VSIX never downloads or auto-updates iCode");
-    expect(readme).toContain("the bundled `extension/bin/chrys` or `extension/bin/chrys.exe`");
+    expect(readme).toContain("Downloads require an explicit user action");
+    expect(readme).toContain("legacy raw-binary packages use `extension/bin/chrys` or `extension/bin/chrys.exe`");
     expect(readme).toContain("## VSIX and TUI parity");
     expect(readme).toContain("Terminal mode opens the VS Code integrated terminal");
     expect(readme).toContain("Companion is a VSIX-owned workflow pet");
@@ -213,7 +254,7 @@ describe("VSIX release manifest", () => {
     expect(readme).toContain("[VSIX Release Checklist](./RELEASE_CHECKLIST.md)");
     expect(readme).toContain("## 中文说明");
     expect(readme).toContain("平台 VSIX 内置");
-    expect(readme).toContain("扩展不会下载或自动更新 iCode");
+    expect(readme).toContain("下载必须由用户主动触发");
     expect(readme).toContain("全角 `／`、`＠`、`＃`、`！`");
     expect(readme).toContain("VSIX 不复刻 TUI 的 F-key/footer 快捷按钮");
     expect(readme).toContain("VSIX 终端模式会打开 VS Code 集成终端");
@@ -260,8 +301,8 @@ describe("VSIX release manifest", () => {
     expect(readSource("RELEASE_CHECKLIST.md")).toContain("Close and reopen chat during a streaming response");
     expect(decisions).toContain("Doctor treats no active session as normal idle");
     expect(decisions).toContain("Changing approval mode with no active session updates the VSIX default only");
-    expect(decisions).toContain("Resolve iCode in this order");
-    expect(decisions).toContain("universal slim package");
+    expect(decisions).toContain("Resolve explicit `chrys.binary.path`");
+    expect(decisions).toContain("light universal package");
     expect(decisions).toContain("platform package carrying a release-built PyApp runtime");
     expect(decisions).toContain("This repository owns the VSIX frontend release surface only");
     expect(decisions).toContain("Use VS Code/webview context actions");
@@ -398,17 +439,17 @@ describe("VSIX release manifest", () => {
     expect(rest.map((frame) => frame.payloadSignature)).not.toContain(idle[3].payloadSignature);
   });
 
-  it("keeps binary resolution ordered as user setting, PATH, then bundled fallback", () => {
-    const source = fs.readFileSync(path.join(extensionRoot, "src", "extension.ts"), "utf8");
-
-    expect(source).toContain("chrys.binary.path -> PATH lookup -> bundled platform binary");
-    expect(source).toContain("const bundledBin = await bundledChrysBinary(context)");
-    expect(source).toContain("path.join(context.extensionUri.fsPath, \"runtime\", platformRuntimeLauncherName())");
-    expect(source).toContain("path.join(context.extensionUri.fsPath, \"bin\", platformBinaryName())");
-    expect(source.indexOf("const configuredPath = await executablePath(expandedConfigBin)"))
-      .toBeLessThan(source.indexOf("?? await findExecutableOnPath(platformBinaryName())"));
-    expect(source.indexOf("?? await findExecutableOnPath(platformBinaryName())"))
-      .toBeLessThan(source.indexOf("const bundledBin = await bundledChrysBinary(context)"));
+  it("resolves configured, bundled, managed, then PATH runtimes", () => {
+    const source = readSource("src/extension.ts");
+    const resolver = readSource("src/runtime/resolve.ts");
+    expect(source).toContain("resolveRuntime(");
+    expect(source).toContain("managedRuntime(context.globalStorageUri.fsPath)");
+    expect(resolver.replace(/\s/g, "")).toContain('["configured","bundled","managed","path"]');
+    expect(source).not.toContain("invalidatePyappCacheIfBinaryChanged");
+    expect(packageJson.contributes.commands.some(c => c.command === "chrys.installRuntime")).toBe(true);
+    const installer = readSource("src/runtime/install.ts");
+    expect(installer.replace(/\s/g, "")).toContain("verifyArchive(archive,expected,signal)");
+    expect(installer.replace(/\s/g, "")).toContain("awaitio.validate(launcher,signal)");
   });
 
   it("builds one universal VSIX and five platform VSIX packages in CD", () => {
@@ -525,7 +566,7 @@ describe("VSIX release manifest", () => {
     expect(typesSource).toContain("contested?: boolean");
     expect(typesSource).toContain("rolledBackUserText?: string");
     expect(typesSource).toContain("exclusions?: RollbackExclusion[]");
-    expect(dialogsSource).toContain("formatDiffRiskDetail");
+    expect(readSource("src/changes/view.ts")).toContain("formatDiffRiskDetail");
     expect(notificationsSource).toContain("formatRollbackResultMessage");
     expect(notificationsSource).toContain("RollbackComposerRestored");
     expect(provenanceSource).toContain("formatMutationBadges");
@@ -587,7 +628,7 @@ describe("VSIX release manifest", () => {
     expect(releaseChecklist).toContain("dedicated ACP reset route");
   });
 
-  it("keeps VSIX 0.0.22 release metadata aligned", () => {
+  it("keeps VSIX 0.0.23 release metadata aligned", () => {
     const packageLock = JSON.parse(readSource("package-lock.json")) as {
       version: string;
       packages: Record<string, { version?: string }>;
@@ -596,11 +637,11 @@ describe("VSIX release manifest", () => {
     const readme = readSource("README.md");
     const workflow = readSource(".github", "workflows", "cd.yml");
 
-    expect(packageJson.version).toBe("0.0.22");
-    expect(packageLock.version).toBe("0.0.22");
-    expect(packageLock.packages[""].version).toBe("0.0.22");
-    expect(versionSource).toContain('PACKAGE_VERSION = "0.0.22"');
-    expect(readme).toContain("v0.0.22-icode-v0.27.1");
+    expect(packageJson.version).toBe("0.0.23");
+    expect(packageLock.version).toBe("0.0.23");
+    expect(packageLock.packages[""].version).toBe("0.0.23");
+    expect(versionSource).toContain('PACKAGE_VERSION = "0.0.23"');
+    expect(readme).toContain("v0.0.23-icode-v0.27.1");
     expect(workflow).toMatch(/VSIX release tag to create, for example v\d+\.\d+\.\d+-icode-v\d+\.\d+\.\d+/);
   });
 
@@ -1015,7 +1056,7 @@ describe("VSIX release manifest", () => {
     const dialogsSource = fs.readFileSync(path.join(extensionRoot, "src", "ui", "dialogs.ts"), "utf8");
     const runtimeSource = fs.readFileSync(path.join(extensionRoot, "src", "state", "runtime.ts"), "utf8");
 
-    const restoreLoad = extensionSource.indexOf("await rt.sessionManager.loadSession(rt.currentCwd!, savedState.sessionId)");
+    const restoreLoad = extensionSource.indexOf("await rt.sessionManager.loadSession(rt.currentCwd!, savedState.sessionId, savedState.additionalDirectories)");
     const restoreClaim = extensionSource.indexOf("rt.currentSessionId = savedState.sessionId", restoreLoad);
     expect(restoreLoad).toBeGreaterThan(-1);
     expect(restoreClaim).toBeGreaterThan(restoreLoad);
@@ -1635,8 +1676,8 @@ describe("VSIX release manifest", () => {
     const extensionSource = fs.readFileSync(path.join(extensionRoot, "src", "extension.ts"), "utf8");
     const dialogsSource = fs.readFileSync(path.join(extensionRoot, "src", "ui", "dialogs.ts"), "utf8");
 
-    expect(dialogsSource).toContain("RollbackBlocked");
-    expect(dialogsSource).toContain("cannot roll back while the current task is running");
+    expect(readSource("src/ui/changes.ts")).toContain("manager.state===\"idle\"");
+    expect(readSource("src/ui/changes.ts")).toContain("Wait for the current task to finish before rollback.");
     expect(dialogsSource).toContain("await deleteSessionById(sessionId, cwd)");
 
 
@@ -1908,4 +1949,22 @@ describe("VSIX release manifest", () => {
       expect(source, file).not.toMatch(/\bconfig\.get<[^>]+>\("chrys\./);
     }
   });
+});
+
+
+describe("advanced Agent parity boundaries", () => {
+  it("documents the remaining public-contract gaps and non-persistent compaction option", () => {
+    const decisions = fs.readFileSync(path.join(extensionRoot, "DESIGN_DECISIONS.md"), "utf8");
+    expect(decisions).toContain("https://github.com/openJiuwen-ai/iCode/issues/5");
+    expect(decisions).toContain("programmatic-only");
+    expect(decisions).not.toContain("Guided forms remain a separate usability improvement");
+  });
+});
+
+
+it("documents frontend drafts separately from backend session replay", () => {
+  const decisions = fs.readFileSync(path.join(extensionRoot, "DESIGN_DECISIONS.md"), "utf8");
+  expect(decisions).toContain("Drafts are not persisted across webview disposal");
+  expect(decisions).toContain("Clone never forks a chat session");
+  expect(decisions).toContain("not interrupted backend execution recovery");
 });

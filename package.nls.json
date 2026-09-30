@@ -46,9 +46,9 @@
   "views.container.title": "iCode",
   "views.sessions.name": "Sessions",
   "views.sessions.contextualTitle": "iCode Sessions",
-  "viewsWelcome.sessions.contents": "[Open iCode](command:chrys.focusChat)\n\nChrys starts from `chrys.binary.path`, PATH, or the bundled runtime in a platform VSIX.",
+  "viewsWelcome.sessions.contents": "[Open iCode](command:chrys.focusChat)\n\nChrys starts from `chrys.binary.path`, PATH, or the bundled runtime in a platform VSIX.\n\n[Download and install iCode](command:chrys.installRuntime)",
   "configuration.title": "iCode",
-  "configuration.binary.path.description": "Path to a local chrys binary. Leave empty to use chrys from PATH, then the bundled runtime in a platform VSIX.",
+  "configuration.binary.path.description": "Optional iCode executable path; overrides bundled, managed and PATH runtimes.",
   "configuration.agent.default.description": "Default agent profile for new VSIX sessions. Empty falls back to CHRYS_DEFAULT_AGENT, then Code.",
   "configuration.model.profile.description": "Default model profile ID applied to new VSIX sessions after ACP starts. Empty leaves iCode model resolution unchanged.",
   "configuration.approval.mode.description": "Initial approval mode for tool calls.",
@@ -88,5 +88,8 @@
   "configuration.ui.brand.icode.description": "Use the iCode wordmark and iC icon (default).",
   "configuration.ui.brand.chrys.description": "Use the iCode wordmark and C icon.",
   "command.showPromptHistory.title": "Search Prompt History",
-  "command.renameSession.title": "Set Local Session Name"
+  "command.renameSession.title": "Set Local Session Name",
+  "command.workflows.title": "Workflows",
+  "command.trajectory.title": "Usage and Trajectory",
+  "command.installRuntime.title": "Download and Install iCode Runtime"
 }

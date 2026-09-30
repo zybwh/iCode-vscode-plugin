@@ -12,6 +12,7 @@ const extensionConfig = {
   metafile: true,
   outfile: "dist/extension.js",
   external: ["vscode"],
+  alias: { "beautiful-mermaid": "./node_modules/beautiful-mermaid/src/ascii/index.ts" },
   platform: "node",
   format: "cjs",
   sourcemap: true,
@@ -26,6 +27,8 @@ const webviewConfig = {
   metafile: true,
   outfile: "dist/webview.js",
   platform: "browser",
+  // Ship the terminal renderer only; the package root also imports the SVG/ELK engine.
+  alias: { "beautiful-mermaid": "./node_modules/beautiful-mermaid/src/ascii/index.ts" },
   format: "iife",
   sourcemap: watch,
   minify: !watch,

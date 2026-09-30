@@ -6,7 +6,7 @@ Guidance for coding agents working in the standalone iCode VS Code / openUBMC St
 
 This directory is the editor frontend for iCode. It is a standalone VSIX that connects to iCode CLI through `icode acp` (with legacy `chrys acp` compatibility).
 
-The universal VSIX must not download, bundle, rebuild, or patch iCode. Platform-specific VSIX packages may bundle a release-built PyApp iCode binary for their target platform, but the packer must only consume an already-built binary. Treat iCode CLI as the backend runtime and this package as the VS Code/openUBMC Studio UI surface.
+The universal VSIX must not bundle, rebuild, or patch iCode. An explicit user action may download and install a pinned official offline release into extension global storage after checksum and ACP validation. Never download silently or auto-update. Platform-specific VSIX packages may bundle a release-built PyApp iCode binary for their target platform, but the packer must only consume an already-built binary. Treat iCode CLI as the backend runtime and this package as the VS Code/openUBMC Studio UI surface.
 
 `package.json` is the source of truth for VSIX metadata, scripts, contributed commands, views, settings, and package version. The iCode CLI/backend version comes from the connected `chrys acp` runtime, not from this VSIX package version.
 
@@ -34,7 +34,7 @@ npm run package
 npm run deploy
 ```
 
-`npm run package` uses `uv run python scripts/pack.py` and writes an ignored `icode-vscode-plugin-<version>.vsix` file in this directory. Platform builds pass `--target <target> --binary <path>` and write ignored `icode-vscode-plugin-<version>-<target>.vsix` files.
+`npm run package` rebuilds the frontend, then uses `uv run python scripts/pack.py` and writes an ignored `icode-vscode-plugin-<version>.vsix` file in this directory. Platform builds pass `--target <target> --binary <path>` and write ignored `icode-vscode-plugin-<version>-<target>.vsix` files.
 `npm run deploy` packages the universal VSIX and installs it into the local macOS openUBMC Studio app for dogfooding.
 
 ## Key Documents
@@ -63,7 +63,7 @@ npm run deploy
 ## Hard Boundaries
 
 - Do not patch the iCode backend for VSIX polish. Backend/ACP gaps should be filed or documented, not vendored into this repository.
-- Do not add VSIX scripts that build, download, or auto-update the iCode CLI. Platform packaging may bundle an explicit release-built `chrys` / `chrys.exe` binary passed to `scripts/pack.py`.
+- Do not add VSIX packaging scripts that build or download the iCode CLI. The extension-owned installer may download only on an explicit user action; no silent installation or auto-update. Platform packaging may bundle an explicit release-built `chrys` / `chrys.exe` binary passed to `scripts/pack.py`.
 - Do not add explicit `activationEvents` for contributed commands or views. VS Code/openUBMC Studio generate them from `contributes`.
 - Do not expose the VSIX package version in product UI, diagnostics, support bundles, or chat chrome. UI should show the connected backend as `iCode CLI vX.Y.Z` from ACP `initialize.agentInfo.version`.
 - Keep VSIX package version independent from iCode CLI. For this release line it starts at `0.0.1` and increments with VSIX branch commits.
@@ -104,7 +104,7 @@ When a capability is missing from ACP:
 - NLS placeholders in `package.json` must exist in both `package.nls.json` and `package.nls.zh-cn.json`.
 - `README.md`, `RELEASE_CHECKLIST.md`, and `DESIGN_DECISIONS.md` are packaged by `scripts/pack.py`; keep the packer and release-manifest tests in sync.
 - The package script should stay cross-platform: use `uv run python scripts/pack.py`, not `python3`.
-- The universal VSIX should not include backend binaries, vendored iCode runtime, old implementation notes, or private release scratch docs. Platform VSIXs may include only the target-matching release-built `extension/bin/chrys` or `extension/bin/chrys.exe`.
+- The universal VSIX should not include backend binaries, vendored iCode runtime, old implementation notes, or private release scratch docs. Platform VSIXs may include a target-matching prepared release runtime under `extension/runtime/`, or a release-built `extension/bin/chrys` / `extension/bin/chrys.exe` with its notices. Runtime selection is explicit configuration, bundled, managed, then PATH. Never delete a user-managed PyApp cache.
 
 ## Testing Guidance
 

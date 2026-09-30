@@ -1,3 +1,5 @@
+import { openTrajectory, disposeTrajectory } from "./ui/trajectory";
+import { openWorkflows, disposeWorkflowRuns } from "./ui/workflows";
 import { withLocalSessionNames, setLocalSessionName } from "./session/localNames";
 import { initialWorkspacePath } from "./common/workspace";
 import type { ChatConnectionState } from "./chat/webview/connectionPresentation";
@@ -5,7 +7,8 @@ import * as vscode from "vscode";
 import * as path from "node:path";
 import * as os from "node:os";
 import * as fs from "node:fs";
-import * as crypto from "node:crypto";
+import { managedRuntime } from "./runtime/install";
+import { resolveRuntime } from "./runtime/resolve";
 import { ProcessManager } from "./process/manager";
 import { SessionManager } from "./session/manager";
 import { ChatPanel } from "./chat/panel";
@@ -116,7 +119,7 @@ async function activateRuntime(context: vscode.ExtensionContext): Promise<ChrysA
       restartBackend: () => restartBackendConnection(context, rt.currentBinaryPath ?? undefined),
     };
   }
-  const saved = context.workspaceState.get<{ sessionId: string; cwd: string }>("chrys.session");
+  const saved = context.workspaceState.get<{ sessionId: string; cwd: string; additionalDirectories?: string[] }>("chrys.session");
   if (saved?.cwd === rt.currentCwd) rt.restoreSession = saved;
   setConnectionState("resolving-backend", rt.currentCwd);
 
@@ -202,42 +205,22 @@ export function buildAcpArgs(config: vscode.WorkspaceConfiguration, cwd: string)
 // ──────────────────────────────────────────────
 
 async function resolveChrysBinary(config: vscode.WorkspaceConfiguration, context: vscode.ExtensionContext): Promise<string | null> {
-  logInfo("Resolving iCode binary: chrys.binary.path -> PATH lookup -> bundled platform binary");
-
-  const configBin = config.get<string>("binary.path");
-  if (configBin) {
-    const expandedConfigBin = expandHome(configBin);
-    logInfo(`Checking configured iCode binary path: ${expandedConfigBin}`);
-    const configuredPath = await executablePath(expandedConfigBin);
-    if (configuredPath) {
-      logInfo(`Using configured iCode binary: ${configuredPath}`);
-      return configuredPath;
-    }
-    logInfo(`Configured iCode binary is not executable: ${expandedConfigBin}`);
-    vscode.window.showWarningMessage(nativeText(
-      `iCode binary path "${configBin}" is not executable. Trying PATH and bundled fallback...`,
-      `iCode 可执行文件路径 "${configBin}" 不可执行。将尝试 PATH 和内置 fallback...`,
-    ));
-  } else {
-    logInfo("No chrys.binary.path configured.");
-  }
-
-  const pathBin = await findExecutableOnPath(process.platform === "win32" ? "icode.exe" : "icode")
-    ?? await findExecutableOnPath(platformBinaryName());
-  if (pathBin) {
-    logInfo(`Using PATH iCode binary: ${pathBin}`);
-    return pathBin;
-  }
-  logInfo(`No executable ${platformBinaryName()} found on PATH.`);
-
-  const bundledBin = await bundledChrysBinary(context);
-  if (bundledBin) {
-    logInfo(`Using bundled iCode binary: ${bundledBin}`);
-    return bundledBin;
-  }
-  logInfo("No bundled iCode binary found in this VSIX.");
-
-  return null;
+  logInfo("Resolving iCode binary: configured -> bundled -> managed -> PATH");
+  const resolved = await resolveRuntime({
+    configured: async () => {
+      const configured = config.get<string>("binary.path")?.trim();
+      if (!configured) return null;
+      const found = await executablePath(expandHome(configured));
+      if (!found) logWarn(`Configured iCode executable is unavailable: ${configured}`);
+      return found;
+    },
+    bundled: () => bundledChrysBinary(context),
+    managed: () => context.globalStorageUri ? managedRuntime(context.globalStorageUri.fsPath) : Promise.resolve(null),
+    path: async () => await findExecutableOnPath(process.platform === "win32" ? "icode.exe" : "icode")
+      ?? await findExecutableOnPath(platformBinaryName()),
+  });
+  if (resolved) logInfo(`Using ${resolved.source} iCode runtime: ${resolved.path}`);
+  return resolved?.path ?? null;
 }
 
 function platformBinaryName(): string {
@@ -255,6 +238,7 @@ function expandHome(value: string): string {
 async function executablePath(candidate: string): Promise<string | null> {
   try {
     const accessMode = process.platform === "win32" ? fs.constants.F_OK : fs.constants.X_OK;
+    if (!(await fs.promises.stat(candidate)).isFile()) return null;
     await fs.promises.access(candidate, accessMode);
     return candidate;
   } catch {
@@ -292,42 +276,6 @@ async function bundledChrysBinary(context: vscode.ExtensionContext): Promise<str
 
 function platformRuntimeLauncherName(): string {
   return process.platform === "win32" ? "chrys.cmd" : "chrys";
-}
-
-function pyappCacheDir(): string {
-  if (process.platform === "darwin") {
-    return path.join(os.homedir(), "Library", "Application Support", "pyapp", "chrys");
-  }
-  if (process.platform === "win32") {
-    return path.join(process.env.LOCALAPPDATA || path.join(os.homedir(), "AppData", "Local"), "pyapp", "chrys");
-  }
-  if (process.env.XDG_DATA_HOME) {
-    return path.join(process.env.XDG_DATA_HOME, "pyapp", "chrys");
-  }
-  return path.join(os.homedir(), ".local", "share", "pyapp", "chrys");
-}
-
-const binaryPreparations = new Map<string, Promise<void>>();
-
-async function invalidatePyappCacheIfBinaryChanged(context: vscode.ExtensionContext, binaryPath: string): Promise<void> {
-  const existing = binaryPreparations.get(binaryPath);
-  if (existing) return existing;
-  const preparation = prepareBinaryCache(context, binaryPath);
-  binaryPreparations.set(binaryPath, preparation);
-  try { await preparation; }
-  catch (error) { binaryPreparations.delete(binaryPath); throw error; }
-}
-
-async function prepareBinaryCache(context: vscode.ExtensionContext, binaryPath: string): Promise<void> {
-  const hash = crypto.createHash("sha256").update(await fs.promises.readFile(binaryPath)).digest("hex");
-  const stateKey = "chrys.pyappBinaryHash";
-  const previousHash = context.globalState.get<string>(stateKey);
-  if (previousHash === hash) return;
-
-  const cacheDir = pyappCacheDir();
-  await fs.promises.rm(cacheDir, { recursive: true, force: true });
-  await context.globalState.update(stateKey, hash);
-  logInfo(`Invalidated PyApp cache for updated iCode binary (${hash.slice(0, 12)}).`);
 }
 
 async function resolveInitialCwd(): Promise<string | null> {
@@ -372,6 +320,7 @@ async function onConnected(
   );
   rt.restartAttempts = 0;
   rt.currentPromptCapabilities = initResp.agentCapabilities?.promptCapabilities ?? null;
+  rt.supportsAdditionalDirectories = Boolean(initResp.agentCapabilities?.sessionCapabilities?.additionalDirectories);
   rt.chrysCliVersion = initResp.agentInfo?.version || "";
   logInfo(`ACP initialized with protocol ${initResp.protocolVersion}${rt.chrysCliVersion ? `, iCode CLI ${rt.chrysCliVersion}` : ""}`);
 
@@ -465,15 +414,30 @@ function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string)
 async function initializeActiveSession(context: vscode.ExtensionContext): Promise<void> {
   if (!rt.sessionManager) return;
   // Try to restore session from workspace state
-  const savedState = rt.restoreSession ?? (!rt.skipRestoreOnce ? context.workspaceState.get<{ sessionId: string; cwd: string }>("chrys.session") : undefined);
+  const savedState = rt.restoreSession ?? (!rt.skipRestoreOnce ? context.workspaceState.get<{ sessionId: string; cwd: string; additionalDirectories?: string[] }>("chrys.session") : undefined);
   if (savedState && savedState.cwd === rt.currentCwd) {
     try {
       recordLifecycleEvent("SessionRestoreStarted", `${sessionShortId(savedState.sessionId)} @ ${savedState.cwd}`);
       rt.currentSessionId = savedState.sessionId;
       resetRenderState(true);
       rt.transcript.clearMessages();
-      await rt.sessionManager.loadSession(rt.currentCwd!, savedState.sessionId);
+      await rt.sessionManager.loadSession(rt.currentCwd!, savedState.sessionId, savedState.additionalDirectories);
+      if(savedState.additionalDirectories) rt.additionalDirectories = [...savedState.additionalDirectories];
       rt.currentSessionId = savedState.sessionId;
+      if (savedState.additionalDirectories === undefined && rt.processManager.client) {
+        try {
+        let cursor: string | undefined;
+        const seen = new Set<string>();
+        do {
+          const page = await rt.processManager.client!.listSessions(rt.currentCwd!, cursor);
+          const entry = page.sessions.find(s => s.sessionId === savedState.sessionId);
+          if(entry) { rt.additionalDirectories = entry.additionalDirectories ?? []; break; }
+          cursor = page.nextCursor;
+          if(cursor && seen.has(cursor))break;
+          if(cursor)seen.add(cursor);
+        } while(cursor);
+        } catch(error) { rt.additionalDirectories=undefined; logWarn(`Could not read saved workspace roots: ${String(error)}`); }
+      }
       rt.persistCurrentSession();
       await refreshRuntimeSnapshot();
       rt.chatPanel?.setState(chatPanelState());
@@ -658,7 +622,7 @@ export async function openSessionTab(session?: Pick<SessionInfo, "sessionId" | "
   // Reserve the identity synchronously, before warm-up, to deduplicate double-clicks.
   const owner = createSessionRuntime(cwd);
   if (agentName) owner.activeAgentName = owner.preferredAgentName = agentName;
-  if (session) owner.restoreSession = { sessionId: session.sessionId, cwd };
+  if (session) { owner.restoreSession = { sessionId: session.sessionId, cwd }; owner.additionalDirectories = undefined; }
   focusRuntime(owner);
   const opening = withRuntime(owner, async () => {
     recordLifecycleEvent("SessionNewStarted", session?.sessionId ?? cwd);
@@ -666,7 +630,7 @@ export async function openSessionTab(session?: Pick<SessionInfo, "sessionId" | "
     if (!(await connectBackend(context, owner.currentBinaryPath ?? undefined))) return false;
     if (session) return owner.currentSessionId === session.sessionId;
     try {
-      owner.currentSessionId = await owner.sessionManager.newSession(cwd);
+      owner.currentSessionId = await owner.sessionManager.newSession(cwd, owner.additionalDirectories);
       recordLifecycleEvent("SessionNewSucceeded", owner.currentSessionId);
       await applyPreferredDefaultsToNewSession();
       await refreshRuntimeSnapshot();
@@ -693,6 +657,17 @@ function registerSessionCommand(command: string, handler: (...args: any[]) => an
 }
 
 function registerCommands(context: vscode.ExtensionContext): void {
+  context.subscriptions.push({ dispose: disposeWorkflowRuns }, { dispose: disposeTrajectory });
+  context.subscriptions.push(registerSessionCommand("chrys.installRuntime", () => installBackendRuntime(context)));
+  context.subscriptions.push(registerSessionCommand("chrys.trajectory", async () => {
+    const client = rt.processManager?.client;
+    try { await openTrajectory(context, rt.currentBinaryPath, rt.currentCwd, rt.currentSessionId, client ? client.listSessions.bind(client) : undefined); }
+    catch (error) { await vscode.window.showErrorMessage(`iCode Trajectory: ${error instanceof Error ? error.message : String(error)}`); }
+  }));
+  context.subscriptions.push(registerSessionCommand("chrys.workflows", async () => {
+    try { await openWorkflows(context, rt.currentBinaryPath, rt.currentCwd); }
+    catch (error) { await vscode.window.showErrorMessage(`iCode Workflow: ${error instanceof Error ? error.message : String(error)}`); }
+  }));
   context.subscriptions.push(registerSessionCommand("chrys.focusChat", () => {
     if (!rt.extensionContext) return;
     ensureChatPanel(rt.extensionContext).reveal();
@@ -1398,7 +1373,6 @@ async function connectBackendOnce(context: vscode.ExtensionContext, binaryOverri
   rt.currentBinaryPath = binaryPath;
   setConnectionState("starting", rt.currentCwd);
   try {
-    await invalidatePyappCacheIfBinaryChanged(context, binaryPath);
     if (rt.shuttingDown) return false;
     const client = await rt.processManager.start(binaryPath, buildAcpArgs(config, rt.currentCwd), rt.currentCwd);
     setConnectionState("initializing", rt.currentCwd);
@@ -1466,17 +1440,46 @@ async function reconnectBackend(context: vscode.ExtensionContext): Promise<void>
   if (!(await connectBackend(context))) await offerBackendSetup(context);
 }
 
+async function installBackendRuntime(context: vscode.ExtensionContext): Promise<void> {
+  const { installManagedRuntime } = await import("./ui/runtimeInstall");
+  const installed = await installManagedRuntime(context);
+  if (!installed) return;
+  // Installing never interrupts a conversation, approvals or another tab's runtime.
+  if (rt.currentSessionId || (rt.sessionManager && rt.sessionManager.state !== "idle")) {
+    await vscode.window.showInformationMessage(nativeText(
+      `iCode installed at ${installed}. Existing sessions keep their runtime; the next backend connection uses the runtime selection order.`,
+      `iCode 已安装到 ${installed}。现有会话继续使用原运行时，下次连接后端时按运行时优先级选择。`,
+    ));
+    return;
+  }
+  const config = vscode.workspace.getConfiguration("chrys");
+  if (config.get<string>("binary.path")?.trim() || await bundledChrysBinary(context)) {
+    await vscode.window.showInformationMessage(nativeText(
+      `iCode is installed at ${installed}. Your configured or bundled runtime remains the first choice. Set chrys.binary.path to this path if you want to switch.`,
+      `iCode 已安装到 ${installed}。当前仍优先使用显式配置或内置运行时；如需切换，可将 chrys.binary.path 设置为此路径。`,
+    ));
+    return;
+  }
+  if (rt.currentCwd) await restartBackendConnection(context);
+  else await vscode.window.showInformationMessage(nativeText(
+    "iCode is installed. Open a workspace to start chatting.",
+    "iCode 已安装，打开工作区即可开始聊天。",
+  ));
+}
+
 async function offerBackendSetup(context: vscode.ExtensionContext): Promise<void> {
   const message = nativeText(
-    "Select the installed iCode executable, add chrys to PATH, or use a platform VSIX with a bundled runtime.",
-    "请选择已安装的 iCode 可执行文件、把 chrys 加入 PATH，或使用内置运行时的平台 VSIX。",
+    "Download and install iCode, select an existing executable, or use a full platform VSIX with an included runtime.",
+    "可下载并安装 iCode、选择已有可执行文件，或使用内置运行时的完整版 VSIX。",
   );
-  const locate = nativeText("Select chrys executable", "选择 chrys 可执行文件");
+  const locate = nativeText("Select installed iCode", "选择已有 iCode");
+  const install = nativeText("Download and install iCode", "下载并安装 iCode");
   const openSettings = nativeText("Open Settings", "打开设置");
   logError(message);
   rt.transcript.appendMessage({ id: nextMessageId(), kind: "error", text: message, timestamp: Date.now() });
   rt.chatPanel?.setState(chatPanelState());
-  const choice = await vscode.window.showErrorMessage(message, locate, openSettings);
+  const choice = await vscode.window.showErrorMessage(message, install, locate, openSettings);
+  if (choice === install) { await installBackendRuntime(context); return; }
   if (choice === openSettings) {
     await vscode.commands.executeCommand("workbench.action.openSettings", "chrys.binary.path");
     return;
@@ -1487,7 +1490,7 @@ async function offerBackendSetup(context: vscode.ExtensionContext): Promise<void
     canSelectFiles: true,
     canSelectFolders: false,
     canSelectMany: false,
-    title: nativeText("Select the iCode chrys executable", "选择 iCode 的 chrys 可执行文件"),
+    title: nativeText("Select the iCode executable", "选择 iCode 可执行文件"),
     filters: process.platform === "win32" ? { "chrys.exe": ["exe"] } : undefined,
   });
   const selectedPath = selected?.[0]?.fsPath;

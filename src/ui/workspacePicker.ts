@@ -35,3 +35,19 @@ export async function pickWorkspaceDirectory(currentCwd?: string): Promise<strin
   });
   return selected?.[0]?.fsPath;
 }
+
+/** Explicit scope selection; never implicitly grant all editor roots. */
+export async function pickAdditionalDirectories(primary: string, current: string[]): Promise<string[] | undefined> {
+  const zh=resolveUiLanguage(vscode.workspace.getConfiguration("chrys").get<string>("ui.language"),vscode.env.language)==="zh-CN";
+  const t=(en:string,cn:string)=>zh?cn:en;
+  const candidates=new Set([...current,...(vscode.workspace.workspaceFolders??[]).map(f=>f.uri.fsPath)]);
+  for(;;){
+    const choices=[...candidates].filter(p=>path.resolve(p)!==path.resolve(primary)).map(directory=>({label:path.basename(directory),detail:directory,directory,picked:current.includes(directory)}));
+    const picked=await vscode.window.showQuickPick([...choices,{label:t("Browse additional folders…","浏览其他文件夹…"),directory:"",picked:false}],{canPickMany:true,title:t("iCode · Workspace scope","iCode · 工作区访问范围"),placeHolder:t(`Primary: ${primary}. Only selected roots are shared.`,`主目录：${primary}。仅共享选中的额外目录。`),matchOnDetail:true});
+    if(!picked)return undefined;
+    current=picked.filter(v=>v.directory).map(v=>v.directory);
+    if(!picked.some(v=>!v.directory))return [...new Set(current.map(p=>path.resolve(p)))];
+    const folders=await vscode.window.showOpenDialog({canSelectFiles:false,canSelectFolders:true,canSelectMany:true,title:t("Additional workspace roots","额外工作区目录")});
+    for(const folder of folders??[]){candidates.add(folder.fsPath);current.push(folder.fsPath);}
+  }
+}

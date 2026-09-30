@@ -46,3 +46,35 @@ export function buildAgentProfileSave(
     name: typeof existing.name === "string" ? existing.name : existingName,
   };
 }
+
+/** A clone has a new identity. Masked credentials cannot be recovered by a new profile. */
+export function cloneAgentProfile(source: Record<string, unknown>, names: readonly string[]): {
+  profile: Record<string, unknown>; omittedSecrets: boolean;
+} {
+  const profile = JSON.parse(JSON.stringify(source)) as Record<string, unknown>;
+  delete profile.id;
+  const base = `${String(source.name || "agent")}-copy`;
+  let name = base;
+  for (let suffix = 2; names.includes(name); suffix++) name = `${base}-${suffix}`;
+  profile.name = name;
+  profile.display_name = name;
+  let omittedSecrets = false;
+  // New identities must never save a redaction placeholder as a real credential.
+  const strip = (value: unknown): void => {
+    if (!value || typeof value !== "object") return;
+    for (const [key, child] of Object.entries(value)) {
+      if (child === "***") {
+        delete (value as Record<string, unknown>)[key];
+        omittedSecrets = true;
+      } else strip(child);
+    }
+  };
+  const tools = profile.tools as { mcp?: unknown[] } | undefined;
+  for (const server of tools?.mcp ?? []) {
+    if (!server || typeof server !== "object") continue;
+    strip((server as Record<string, unknown>).headers);
+    strip((server as Record<string, unknown>).env);
+  }
+  strip((profile.acp as Record<string, unknown> | undefined)?.env);
+  return { profile, omittedSecrets };
+}

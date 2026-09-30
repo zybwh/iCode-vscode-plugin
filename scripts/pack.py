@@ -95,7 +95,8 @@ def validate_frontend_licenses(ext_dir: Path) -> list[Path]:
     paths = [ext_dir / name for name in required]
     for component in components:
         name = component["name"]
-        locked = lock["packages"].get(f"node_modules/{name}", {})
+        package_path = component.get("packagePath", f"node_modules/{name}")
+        locked = lock["packages"].get(package_path, {})
         if locked.get("version") != component["version"]:
             raise SystemExit(f"license inventory version mismatch: {name}")
         license_path = ext_dir / component["file"]
@@ -103,7 +104,7 @@ def validate_frontend_licenses(ext_dir: Path) -> list[Path]:
             raise SystemExit(f"dependency license missing: {name}")
         if hashlib.sha256(license_path.read_bytes()).hexdigest() != component["sha256"]:
             raise SystemExit(f"dependency license hash mismatch: {name}")
-        approved.add(name)
+        approved.add(package_path)
         paths.append(license_path)
     bundled = set()
     for bundle in ["extension.js", "webview.js"]:
@@ -116,7 +117,7 @@ def validate_frontend_licenses(ext_dir: Path) -> list[Path]:
                 continue
             package_parts = parts[-1].split("/")
             name = "/".join(package_parts[:2]) if package_parts[0].startswith("@") else package_parts[0]
-            bundled.add(name)
+            bundled.add("node_modules/".join(parts[:-1]) + "node_modules/" + name)
     if bundled != approved:
         raise SystemExit(f"bundled dependency license inventory mismatch: bundled={sorted(bundled)}, approved={sorted(approved)}")
     return paths
@@ -165,10 +166,10 @@ def main() -> None:
         binary_path = args.binary.resolve()
         if not binary_path.is_file():
             raise SystemExit(f"bundled binary not found: {binary_path}")
-        for name in ["LICENSE", "NOTICE"]:
-            notice = binary_path.parent / name
+        for notice_name in ["LICENSE", "NOTICE"]:
+            notice = binary_path.parent / notice_name
             if not notice.is_file() or not notice.stat().st_size:
-                raise SystemExit(f"raw binary requires adjacent upstream {name}")
+                raise SystemExit(f"raw binary requires adjacent upstream {notice_name}")
             binary_notices.append(notice)
         binary_name = "chrys.exe" if args.target == "win32-x64" else "chrys"
         if binary_name == "chrys.exe" and binary_path.name != "chrys.exe":
@@ -239,6 +240,9 @@ def main() -> None:
         design_decisions_path = ext_dir / "DESIGN_DECISIONS.md"
         if design_decisions_path.exists():
             z.write(design_decisions_path, "extension/DESIGN_DECISIONS.md")
+        capability_plan_path = ext_dir / "FEATURE_PARITY.md"
+        if capability_plan_path.exists():
+            z.write(capability_plan_path, "extension/FEATURE_PARITY.md")
         z.write(ext_dir / "dist" / "extension.js", "extension/dist/extension.js")
         z.write(ext_dir / "dist" / "webview.js", "extension/dist/webview.js")
         z.write(ext_dir / "dist" / "theme.css", "extension/dist/theme.css")

@@ -437,3 +437,54 @@ describe("Independent session processes", () => {
     }
   }, 30_000);
 });
+
+describe("Public multi-root ACP contract", () => {
+  it("preserves explicitly granted roots across close/load and lists the scope", async () => {
+    const { ProcessManager } = await import("../../src/process/manager");
+    const os = await import("node:os");
+    const root=fs.mkdtempSync(path.join(os.tmpdir(),"icode-roots-test-"));
+    const extra=path.join(root,"extra");fs.mkdirSync(extra);
+    const manager=new ProcessManager();
+    const profileId=(await import("node:crypto")).randomUUID();
+    let wroteProfile=false;
+    try {
+      const client=await manager.start(resolveChrysBinary(),["acp","--agent","Code","-C",root],root);
+      await client.initialize(1,{name:"icode-roots-test",version:"0.0.0"});
+      const {sessionId}=await client.newSession(root,[extra]);
+      await client.writeModelProfile({id:profileId,name:"Integration roots fixture",provider:"mock",api_style:"chat_completions",model_id:"mock"});wroteProfile=true;
+      await client.setModel(sessionId,profileId);
+      await client.prompt(sessionId,[{type:"text",text:"Scope persistence fixture"}]);
+      await client.closeSession(sessionId);
+      await client.loadSession(root,sessionId);
+      const page=await client.listSessions(root);
+      expect(page.sessions.find(s=>s.sessionId===sessionId)?.additionalDirectories).toEqual([fs.realpathSync(extra)]);
+      await client.closeSession(sessionId);
+      await client.loadSession(root,sessionId,[]);
+      await client.prompt(sessionId,[{type:"text",text:"Persist cleared scope fixture"}]);
+      expect((await client.listSessions(root)).sessions.find(s=>s.sessionId===sessionId)?.additionalDirectories??[]).toEqual([]);
+      await client.closeSession(sessionId);
+    } finally {if(wroteProfile)await manager.client?.deleteModelProfile(profileId);await manager.stop();fs.rmSync(root,{recursive:true,force:true});}
+  },60_000);
+});
+
+// Cross-platform smoke used by the full-package matrix, with no model requests.
+describe("Packaged runtime startup", () => {
+  it("checks the selected runtime version and ACP session lifecycle", async () => {
+    const os = await import("node:os");
+    const { ProcessManager } = await import("../../src/process/manager");
+    const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "icode-runtime-smoke-"));
+    const manager = new ProcessManager();
+    try {
+      const client = await manager.start(path.resolve(resolveChrysBinary()), ["acp", "-C", workspace], workspace);
+      const initialized = await client.initialize(1, { name: "icode-vsix-runtime-smoke", version: "1" });
+      expect(initialized.agentInfo?.version).toBe(process.env.ICODE_EXPECTED_VERSION || "0.28.0");
+      expect(initialized.protocolVersion).toBe(1);
+      const { sessionId } = await client.newSession(workspace);
+      expect((await client.runtime(sessionId)).sessionId).toBe(sessionId);
+      await client.closeSession(sessionId);
+    } finally {
+      await manager.stop();
+      fs.rmSync(workspace, { recursive: true, force: true });
+    }
+  }, 60_000);
+});

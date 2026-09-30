@@ -28,3 +28,9 @@ MarkedJS、Christopher Jeffrey 和 John Gruber 的声明，随包保留。DOMPur
 
 平台包还包含 iCode 及其依赖，必须保留后端自己的 LICENSE、NOTICE 和依赖
 许可目录。本文件仅覆盖前端内置依赖，不能替代后端声明。
+
+## Terminal diagram renderer / 字符图渲染器
+
+The webview also bundles beautiful-mermaid's ASCII/Unicode renderer (MIT), with its complete [license](licenses/beautiful-mermaid-LICENSE.txt). The SVG/ELK renderer is excluded from the build. The upstream ASCII engine credits Alexander Grooff's mermaid-ascii; see https://github.com/lukilabs/beautiful-mermaid for source and attribution.
+
+webview 还包含 beautiful-mermaid 的 ASCII/Unicode 字符图渲染器（MIT），完整许可随包保留。构建不包含 SVG/ELK 引擎；上游字符图引擎注明基于 Alexander Grooff 的 mermaid-ascii。

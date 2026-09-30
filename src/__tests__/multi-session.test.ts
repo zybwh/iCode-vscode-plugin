@@ -29,6 +29,7 @@ vi.mock("../process/manager", () => ({
         initialize: async () => { await harness.initialization; return { protocolVersion: 1, agentInfo: { version: "test" } }; },
         newSession: vi.fn(async () => ({ sessionId: this.id })),
         loadSession: vi.fn(async (_cwd: string, id: string) => { this.id = id; return {}; }),
+        listSessions: async () => ({ sessions: [{ sessionId: this.id, cwd: "/workspace", additionalDirectories: ["/extra"] }] }),
         runtime: async () => ({ sessionId: this.id }),
         listMcp: async () => ({ servers: [] }),
         listSkills: async () => ({ skills: [] }),

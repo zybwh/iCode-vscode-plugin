@@ -26,7 +26,7 @@ Lint covers both extension-host and webview TypeScript. Unit tests include webvi
 
 The lint, unit test, build, universal package, and at least one platform package smoke must pass before a release candidate is handed to manual QA.
 
-Universal VSIX packages must not include `extension/bin/`. Platform VSIX packages must include exactly one target-matching release-built binary under `extension/bin/chrys` or `extension/bin/chrys.exe`, and their `extension.vsixmanifest` must set `TargetPlatform`.
+Universal VSIX packages must not include `extension/bin/` or `extension/runtime/`. Platform VSIX packages include a prepared target runtime under `extension/runtime/`, or a target-matching release-built binary under `extension/bin/` with notices. Their `extension.vsixmanifest` must set `TargetPlatform`.
 
 ### iCode CLI Compatibility Smoke
 
@@ -38,7 +38,7 @@ Universal VSIX packages must not include `extension/bin/`. Platform VSIX package
 
 ## GitHub Release
 
-The CD workflow is manual-only. Creating a GitHub release or tag must not automatically start CD, because release tags such as `v0.0.22-icode-v0.27.1` are VSIX tags, not iCode CLI runtime tags.
+The CD workflow is manual-only. Creating a GitHub release or tag must not automatically start CD, because release tags such as `v0.0.23-icode-v0.27.1` are VSIX tags, not iCode CLI runtime tags.
 
 When using CD to publish platform VSIX packages, pass both:
 
@@ -79,8 +79,8 @@ For development smoke tests, `~/.bmc-studio/extensions/chrys.icode-vscode-plugin
 - Fresh VS Code window with iCode not on PATH shows a clear install/configure prompt.
 - `chrys.binary.path` points to a user-installed iCode CLI and starts ACP successfully.
 - In a universal VSIX, a missing or broken binary leads to Doctor, not a silent empty chat.
-- In a platform VSIX, a missing `chrys.binary.path` and PATH fallback starts the bundled `extension/bin/chrys` or `extension/bin/chrys.exe`.
-- If both user-managed and bundled binaries exist, `chrys.binary.path` wins, then PATH, then the bundled runtime.
+- In a full platform VSIX, the bundled runtime starts by default even when PATH or a managed runtime exists.
+- Priority: explicit `chrys.binary.path`, bundled runtime, managed installation, then PATH (`icode`, `chrys`).
 - Default agent, model profile, and approval mode apply to new VSIX sessions without passing unsupported ACP startup flags.
 
 ### Chat Layout And Connection Lifecycle
@@ -204,6 +204,13 @@ A VSIX release candidate is acceptable when:
 
 ### Review regression checks
 
+- Composer New clears the originating view without opening a tab or resetting backend context. Verify the tooltip and busy guard; `/new` and Sessions New still open independent sessions.
+
+- Verify advanced agent JSON sections save model/tools/approval/sub-agent/skills/memory/compaction/ACP settings; unchanged masked secrets and unknown fields survive. Invalid JSON must not dispatch a partial save; clearing ACP must remove the external-agent configuration.
+- Verify `$` and `＄` open model selection while idle without sending a prompt, and do not switch models during a running turn.
+- Verify closed Mermaid flowchart, sequence and entity fences render automatically as themed terminal diagrams. Check CJK alignment, narrow horizontal scrolling, theme changes and source disclosure; incomplete, unsupported, RL and oversized diagrams retain source. Diagram labels and source must remain literal text.
+- The packaged capability plan explicitly lists Workflow and Trajectory as pending backend contracts; do not advertise them as implemented.
+
 - Restart ACP from Doctor and switch agents for a new session; both paths complete initialization before accepting prompts.
 - Close pending approval and ask-user dialogs when restarting or disconnecting the backend.
 - Before the first session, select model/agent defaults and save agent profiles without session-required requests. Existing workspace setting overrides must receive the selected default.
@@ -220,3 +227,57 @@ A VSIX release candidate is acceptable when:
 - Keep `@vscode/vsce` and its proprietary signing dependency out of this custom packer workflow.
 - Platform packages must preserve the iCode dist-info LICENSE/NOTICE and dependency license files on every target. Raw binaries require adjacent upstream LICENSE/NOTICE, packaged under `runtime-licenses/`.
 - Record provenance for new or replaced artwork in `ASSET_PROVENANCE.md` before release.
+
+## Workflow CLI smoke
+
+- `/workflow` and Command Palette discover builtin/global/project sources without importing user code.
+- User source opens in the editor. Cancelling input or the explicit BYPASS/trust confirmation must never run the workflow. Changed source requires re-review.
+- Verify empty/Chinese input, spaces in paths, default CLI agent, timeout, and a separate workflow session.
+- Cancel from the progress notification/menu; process and descendants terminate. Repeated execution in the same workspace is guarded.
+- Completion/failure/cancellation opens result JSON. Last 10 results up to 256 KiB each survive reopening; larger results stay in the editor for Save As.
+- Unsupported CLI and Windows command wrappers fail clearly; no private Workflow ACP method, fake live DAG, or automatic approval bypass.
+
+## Usage and Trajectory smoke
+
+- Restore a session whose cumulative spend exceeds its context window: gauge must use current `totalTokens`, never `totalSessionTokens`. Child events update spend without replacing the main context.
+- Zero stays `0`, absent data stays `—`; partial snapshots retain known fields. Latest readings and session cumulative totals have distinct labels.
+- `/usage`, `/trajectory`, Context sidebar and Command Palette open current/historical session or JSONL analysis. Saved-session pagination works.
+- Report retains exact/estimated/missing/unresolved metrics and backend timing. Malformed labels render as literal text; no script executes.
+- JSON/CSV/findings CSV/Perfetto exports preserve default redaction. Cancel, unsupported CLI, absent logs, schema mismatch and oversize previews fail clearly and clean temporary files. Never overwrite source events.
+- Report limits are visible and full export is available. Snapshot refresh is explicit, and missing model attribution is not fabricated.
+
+- Compare Trajectory Overview/Timeline against upstream TUI screenshots: three-column cards, monospace type, thin frames, precision badges, turn tabs, shared rulers and coloured hierarchy. Test radio-tab keyboard navigation, overflow at narrow widths and literal labels under CSP. Skill/MCP and wall-slice gaps must remain explicit.
+
+## TUI parity interactions
+
+- Check Diff and Rollback file selection, period changes, unified/split previews, literal markup-like content, and native editor opening. Verify rollback previews exclude the retained turn, reverse the changes, preserve backend exclusions, and cancellation/changed session/busy state never sends a rollback.
+- Verify `/rollback last N` and `/rollback to N` with multiple turns; `revert` still opens preview and confirmation.
+- Check `/roots` with two directories, reload, new tab, saved session and explicit clear; confirm one tab cannot change another tab's scope.
+- Attach/remove a file, editor selection and Problems; verify paths/line ranges and unchanged prompt text. No implicit editor context.
+- Edit guided Agent fields and repeated MCP/sub-agent rows; round-trip unknown values and masked secrets; inspect both languages and section navigation.
+- Refresh Trajectory without losing the selected tab; expand an operation and dependency graph. Closing during refresh cancels the export. Validate graph precision and absent-data wording.
+- CI runtime compatibility pins public iCode v0.28.0 and validates its archive checksum; universal packaging never downloads the runtime.
+
+Current verification: browser fixtures exercise the production renderers; these are synthetic rendering data, not production sessions. Native Studio smoke is still pending while the Mac is locked. Backend-only Trajectory/rollback-plan gaps are tracked in https://github.com/openJiuwen-ai/iCode/issues/4; do not mark those as full parity.
+
+
+### Advanced Agent form follow-up
+
+- [ ] Studio: add/edit/remove MCP headers/env; preserve `***` and empty strings; distinguish inherited vs empty allowed tools.
+- [ ] Studio: edit inline Skill resources/scripts, external ACP typed options and web-provider templates; malformed input must block saving.
+- [ ] Studio: check compact section tabs and nested rows at narrow width and in light/high-contrast themes.
+- [ ] Do not mark session fork/shared titles, approval edits or interrupted recovery complete before upstream #5 has supported contracts and live integration coverage.
+
+- [ ] Agent: edit A, switch to B, return/reopen/refresh and verify A's draft remains; successful save clears only A; externally changed A refuses stale save; Discard reloads it.
+- [ ] Agent: Clone opens an unsaved draft with a new name/identity and an explicit missing-masked-credentials notice. Existing names cannot be overwritten from the new-profile form.
+- [ ] Sessions: filter by full path/ID, navigate with arrows/Space/Enter, refresh and retain visible selection; filtered-out selection cannot be deleted or resumed.
+- [ ] Approval/AskUser: duplicate pending snapshot retains typed input; a new or completed request resets it.
+
+### Managed runtime installation
+
+- Light VSIX discovers an existing CLI without downloading; missing-runtime setup and Sessions expose the explicit install command in both languages.
+- Test successful download, SHA256 mismatch, missing checksum, cancellation, failed ACP/version validation, retry and simultaneous install clicks. Old runtime stays active until a new candidate passes validation.
+- Verify isolated global storage and PyApp cache; user CLI, PATH and shared caches remain untouched. Installing during a session must not restart it.
+- Test host-based target selection in SSH/WSL and a clear error for unsupported architectures. Validate Windows `tar` extraction and `.cmd` startup on Windows, not on macOS.
+- CI tests the same source SHA and selected backend release as CD; every platform runs ACP initialization and session smoke before packaging. No model inference is needed for this smoke.
+- `npm run package` rebuilds the frontend. Verify universal and platform archives retain the `icode-vscode-plugin` identity, including raw-binary packages with LICENSE/NOTICE.

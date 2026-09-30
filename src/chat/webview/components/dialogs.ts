@@ -1,6 +1,7 @@
 import { objectValue, stringField, numberField, boolField } from "../../../common/utils";
 import { PROVIDERS } from "../../../common/providers";
-import { buildAgentProfileSave } from "../../agentProfileEdit";
+import { buildAgentProfileSave, cloneAgentProfile } from "../../agentProfileEdit";
+import { agentConfigurationFields, applyAgentConfiguration } from "./agentConfiguration";
 import { askUserAnswerFromDraft, createAskUserDraft, toggleAskUserDraftOption, updateAskUserDraftText } from "../../askUserDraft";
 import { state } from "../state";
 import { el, formatJson, shortSessionId, baseName } from "../helpers";
@@ -445,19 +446,38 @@ export function showAgentDialogNotice(agentDialog: HTMLElement, level: "info" | 
   }, 3500);
 }
 
-function renderAgentForm(agent: ChatAgentDialogState["agents"][number] | undefined): HTMLElement {
+type AgentDraft = { form: HTMLElement; source: Record<string, unknown>; dirty: boolean; seed?: Record<string, unknown> };
+const agentDrafts = new WeakMap<HTMLElement, Map<string, AgentDraft>>();
+function draftsFor(dialog: HTMLElement): Map<string, AgentDraft> {
+  let drafts = agentDrafts.get(dialog);
+  if (!drafts) { drafts = new Map(); agentDrafts.set(dialog, drafts); }
+  return drafts;
+}
+function draftChangedRemotely(name: string, draft: AgentDraft): boolean {
+  return name !== "__new__" && JSON.stringify(draft.source) !== JSON.stringify(state.agentDialogState.profiles[name]);
+}
+function markAgentDraft(dialog: HTMLElement, name: string): void {
+  const draft = draftsFor(dialog).get(name);
+  if (!draft) return;
+  draft.dirty = true;
+  dialog.querySelectorAll<HTMLElement>("[data-agent-name]").forEach(button => {
+    if (button.dataset.agentName === name && !button.querySelector(".agent-draft-badge")) {
+      button.append(el("span", {class:"agent-draft-badge"}, dialogText("Unsaved", "未保存")));
+    }
+  });
+}
+
+function renderAgentForm(agent: ChatAgentDialogState["agents"][number] | undefined, seed?: Record<string, unknown>): HTMLElement {
   const isNew = state.selectedAgentName === "__new__";
   const isActive = !isNew && agent?.name === state.agentDialogState.activeAgentName;
   const isBuiltIn = !isNew && agent?.builtin === true;
-  const profile = isNew ? {} : objectValue(state.agentDialogState.profiles[agent?.name ?? ""] ?? null);
-  const name = isNew ? "" : stringField(profile, "name") || agent?.name || "";
-  const displayName = isNew ? "" : stringField(profile, "display_name") || agent?.displayName || "";
-  const description = isNew ? "" : stringField(profile, "description") || agent?.description || "";
-  const instructions = isNew ? "" : stringField(profile, "instructions") || stringField(profile, "system_prompt") || "";
+  const profile = isNew ? seed ?? {} : objectValue(state.agentDialogState.profiles[agent?.name ?? ""] ?? null);
+  const name = stringField(profile, "name") || agent?.name || "";
+  const displayName = stringField(profile, "display_name") || agent?.displayName || "";
+  const description = stringField(profile, "description") || agent?.description || "";
+  const instructions = stringField(profile, "instructions") || stringField(profile, "system_prompt") || "";
 
-  return el("form", { class: "model-form" },
-    el("h3", {}, isNew ? dialogText("Create Agent Profile", "创建智能体配置") : dialogText("Edit Agent Profile", "编辑智能体配置")),
-    isNew ? el("span", { class: "hidden" }, "") : el("input", { name: "original_name", type: "hidden", value: agent?.name || "" }),
+  const basicFields = el("div", {class:"agent-guided-fields agent-basic-fields"},
     el("label", {}, dialogText("Name", "名称"), el("input", {
       name: "name",
       value: name,
@@ -471,6 +491,12 @@ function renderAgentForm(agent: ChatAgentDialogState["agents"][number] | undefin
     el("label", {}, dialogText("Display Name", "显示名称"), el("input", { name: "display_name", value: displayName, placeholder: "My Agent" })),
     el("label", {}, dialogText("Description", "描述"), el("input", { name: "description", value: description })),
     el("label", {}, dialogText("Instructions", "指令"), el("textarea", { name: "instructions", style: "min-height:120px;resize:vertical;font-family:var(--chrys-font-mono)" }, instructions)),
+  );
+
+  return el("form", { class: "model-form" },
+    el("h3", {}, isNew ? dialogText("Create Agent Profile", "创建智能体配置") : dialogText("Edit Agent Profile", "编辑智能体配置")),
+    isNew ? el("span", { class: "hidden" }, "") : el("input", { name: "original_name", type: "hidden", value: agent?.name || "" }),
+    agentConfigurationFields(profile ?? {}, state.uiLanguage === "zh-CN", basicFields),
     el("div", { class: "modal-row profile-form-actions" },
       el("button", { class: "modal-button", type: "submit" }, isNew ? dialogText("Create Agent", "创建智能体") : dialogText("Save Agent", "保存智能体")),
       isNew ? el("span", { class: "modal-spacer" }, "") : el("button", {
@@ -479,6 +505,8 @@ function renderAgentForm(agent: ChatAgentDialogState["agents"][number] | undefin
         disabled: isActive ? "" : undefined,
         "data-set-active-agent": agent?.name || "",
       }, isActive ? dialogText("Active", "当前") : dialogText("Set Active", "设为当前")),
+      el("button", {class:"modal-button secondary",type:"button","data-discard-agent-draft":"true"}, dialogText("Discard edits", "放弃修改")),
+      ...(!isNew ? [el("button", {class:"modal-button secondary",type:"button","data-clone-agent":"true"}, dialogText("Clone", "复制配置"))] : []),
       isNew ? el("span", { class: "modal-spacer" }, "") : el("button", {
         class: "modal-button danger",
         type: "button",
@@ -495,10 +523,59 @@ function renderAgentForm(agent: ChatAgentDialogState["agents"][number] | undefin
 function wireAgentDetailActions(agentDialog: HTMLElement, vscode: { postMessage(msg: unknown): void }): void {
   const showNotice = (level: "info" | "warning" | "error", text: string) => showAgentDialogNotice(agentDialog, level, text);
 
+  const draftName = state.selectedAgentName;
+  const form = agentDialog.querySelector<HTMLFormElement>(".model-form");
+  form?.addEventListener("input", () => markAgentDraft(agentDialog, draftName));
+  form?.addEventListener("change", () => markAgentDraft(agentDialog, draftName));
+  form?.addEventListener("agent-section-updated", () => markAgentDraft(agentDialog, draftName));
+  form?.querySelector("[data-discard-agent-draft]")?.addEventListener("click", () => {
+    if (draftsFor(agentDialog).get(draftName)?.dirty && !window.confirm(dialogText("Discard this profile's unsaved edits?", "放弃此配置尚未保存的修改？"))) return;
+    draftsFor(agentDialog).delete(draftName);
+    renderAgentDialog(agentDialog, vscode);
+  });
+  form?.querySelector("[data-clone-agent]")?.addEventListener("click", () => {
+    if (!form.checkValidity()) { form.reportValidity(); return; }
+    const draft = draftsFor(agentDialog).get(draftName);
+    if (!draft) return;
+    try {
+      if (!state.agentDialogState.profiles[draftName]) throw new Error(dialogText("The complete profile has not loaded. Refresh before cloning.", "完整配置尚未加载，请刷新后再复制。"));
+      const data = new FormData(form);
+      const source = applyAgentConfiguration({...draft.source, name:draftName, display_name:String(data.get("display_name") ?? ""), description:String(data.get("description") ?? ""), instructions:String(data.get("instructions") ?? "")}, draft.source, data, state.uiLanguage === "zh-CN");
+      if (draftsFor(agentDialog).get("__new__")?.dirty && !window.confirm(dialogText("Replace the unsaved new-profile draft with this clone?", "用此副本替换尚未保存的新配置草稿？"))) return;
+      const clone = cloneAgentProfile(source, state.agentDialogState.agents.map(agent => agent.name));
+      state.selectedAgentName = "__new__";
+      const clonedForm = renderAgentForm(undefined, clone.profile);
+      clonedForm.prepend(el("p",{class:"agent-clone-notice"},clone.omittedSecrets
+        ? dialogText("Clone draft: masked credentials were omitted. Re-enter them before saving.", "复制草稿：已省略脱敏凭据，请在保存前重新填写。")
+        : dialogText("Clone draft: edit the name and save to create an independent profile.", "复制草稿：编辑名称并保存，才会创建独立配置。")));
+      draftsFor(agentDialog).set("__new__",{form:clonedForm,source:clone.profile,seed:clone.profile,dirty:true});
+      renderAgentDialog(agentDialog, vscode);
+    } catch (error) { showNotice("error", error instanceof Error ? error.message : String(error)); }
+  });
+
+  // Native submit validation runs before the submit event, including hidden tabs.
+  agentDialog.querySelector("form")?.addEventListener("invalid", (event) => {
+    const control = event.target;
+    if (!(control instanceof HTMLElement)) return;
+    const section = control.closest<HTMLElement>("[data-section]");
+    if (section) agentDialog.querySelector<HTMLButtonElement>(`[data-section-tab="${section.dataset.section}"]`)?.click();
+    const details = control.closest("details");
+    if (details) details.open = true;
+  }, true);
+
   agentDialog.querySelector<HTMLFormElement>(".model-form")?.addEventListener("submit", (event) => {
     event.preventDefault();
     const form = event.currentTarget;
     if (!(form instanceof HTMLFormElement)) return;
+    if (!form.checkValidity()) {
+      const invalid = form.querySelector<HTMLElement>(":invalid");
+      const section = invalid?.closest<HTMLElement>("[data-section]");
+      if (section) agentDialog.querySelector<HTMLButtonElement>(`[data-section-tab="${section.dataset.section}"]`)?.click();
+      const details = invalid?.closest("details");
+      if (details) details.open = true;
+      form.reportValidity();
+      return;
+    }
     const formData = new FormData(form);
     const name = String(formData.get("name") || "").trim();
     if (!name) {
@@ -512,12 +589,20 @@ function wireAgentDetailActions(agentDialog: HTMLElement, vscode: { postMessage(
       instructions: String(formData.get("instructions") || "").trim(),
     };
     const originalName = String(formData.get("original_name") || "").trim();
-    const existing = originalName
-      ? state.agentDialogState.profiles[originalName]
-      : undefined;
+    const draft = draftsFor(agentDialog).get(draftName);
+    if (draft && draftChangedRemotely(draftName, draft)) {
+      showNotice("warning", dialogText("This profile changed outside this editor. Discard the draft to load the latest version before saving.", "此配置已在编辑器外发生变化。请放弃草稿并加载最新版本后再保存。"));
+      return;
+    }
+    if (!originalName && state.agentDialogState.agents.some(agent => agent.name === name)) {
+      showNotice("warning", dialogText("That profile name already exists. Choose another name.", "该配置名称已存在，请使用其他名称。"));
+      return;
+    }
+    const existing = originalName ? draft?.source ?? state.agentDialogState.profiles[originalName] : draft?.seed;
     let payload: Record<string, unknown>;
     try {
       payload = buildAgentProfileSave(existing, fields, originalName || undefined);
+      if (!originalName) payload.name = name;
     } catch {
       showNotice(
         "error",
@@ -526,6 +611,12 @@ function wireAgentDetailActions(agentDialog: HTMLElement, vscode: { postMessage(
           "未能加载完整的智能体配置。请刷新对话框后再保存。",
         ),
       );
+      return;
+    }
+    try {
+      payload = applyAgentConfiguration(payload, existing ?? {}, formData, state.uiLanguage === "zh-CN");
+    } catch (error) {
+      showNotice("error", error instanceof Error ? error.message : String(error));
       return;
     }
     vscode.postMessage({ type: "agentDialogSave", agent: payload });
@@ -589,16 +680,44 @@ function renderAgentDialog(agentDialog: HTMLElement, vscode: { postMessage(msg: 
       el("p", { class: "modal-muted" }, dialogText("Choose an agent from the list or create a new one.", "从列表选择一个智能体，或新建一个配置。")),
     );
   } else {
-    detail.append(renderAgentForm(selected));
+    const drafts = draftsFor(agentDialog);
+    let draft = drafts.get(state.selectedAgentName);
+    if (!draft) {
+      draft = {form:renderAgentForm(selected), source:state.agentDialogState.profiles[state.selectedAgentName] ?? {}, dirty:false};
+      drafts.set(state.selectedAgentName, draft);
+    }
+    detail.append(draft.form);
+    const activeButton = draft.form.querySelector<HTMLButtonElement>("[data-set-active-agent]");
+    if (activeButton) {
+      const active = state.selectedAgentName === state.agentDialogState.activeAgentName;
+      activeButton.textContent = active ? dialogText("Active", "当前") : dialogText("Set Active", "设为当前");
+      if (disabledControls.has(activeButton)) disabledControls.set(activeButton, active);
+      else activeButton.disabled = active;
+    }
+    if (!draft.form.dataset.actionsWired) {
+      wireAgentDetailActions(agentDialog, vscode);
+      draft.form.dataset.actionsWired = "true";
+    }
+    if (draft.dirty && draftChangedRemotely(state.selectedAgentName, draft)) showAgentDialogNotice(agentDialog,"warning",dialogText("The saved profile changed. Your draft is retained; discard it to load the latest version.", "已保存配置发生变化，当前草稿仍保留；放弃修改可加载最新版本。"));
   }
-  wireAgentDetailActions(agentDialog, vscode);
+  for (const [name, draft] of draftsFor(agentDialog)) if (draft.dirty) markAgentDraft(agentDialog, name);
 }
 
 export function setAgentDialogState(dialogState: ChatAgentDialogState, agentDialog: HTMLElement, vscode: { postMessage(msg: unknown): void }): void {
+  const drafts = draftsFor(agentDialog);
+  if (dialogState.updatedAgentName) {
+    drafts.delete(dialogState.updatedAgentName);
+    const newDraft = drafts.get("__new__");
+    if (newDraft?.form.querySelector<HTMLInputElement>('[name="name"]')?.value.trim() === dialogState.updatedAgentName) drafts.delete("__new__");
+    if (dialogState.agents.some(agent => agent.name === dialogState.updatedAgentName)) state.selectedAgentName = dialogState.updatedAgentName;
+  }
+  for (const [name, draft] of drafts) {
+    if (name !== "__new__" && (!draft.dirty || !dialogState.profiles[name])) drafts.delete(name);
+  }
   state.agentDialogState.agents = dialogState.agents;
   state.agentDialogState.profiles = dialogState.profiles;
   state.agentDialogState.activeAgentName = dialogState.activeAgentName;
-  if (!state.selectedAgentName || !dialogState.agents.some((agent) => agent.name === state.selectedAgentName)) {
+  if (!state.selectedAgentName || (state.selectedAgentName !== "__new__" && !dialogState.agents.some((agent) => agent.name === state.selectedAgentName))) {
     state.selectedAgentName = dialogState.activeAgentName || dialogState.agents[0]?.name || "";
   }
   renderAgentDialog(agentDialog, vscode);
@@ -721,7 +840,9 @@ export function renderInlineDialog(inlineDialog: HTMLElement, vscode: { postMess
     headerActions.classList.add("hidden");
     footer.classList.remove("hidden");
 
-    let selectedId: string | null = null;
+    const sessionState = state.inlineDialogState;
+    let selectedId: string | null = sessionState.sessions.some(session => session.sessionId === inlineDialog.dataset.selectedSessionId)
+      ? inlineDialog.dataset.selectedSessionId! : null;
 
     const updateFooter = () => {
       const hasSelection = selectedId !== null;
@@ -792,32 +913,59 @@ export function renderInlineDialog(inlineDialog: HTMLElement, vscode: { postMess
           const dir = baseName(session.cwd);
           const size = String(session._meta?.sessionSizeHuman || "");
           return el("tr", {
-            class: "inline-session-row-clickable",
+            class: `inline-session-row-clickable${session.sessionId === selectedId ? " selected" : ""}`,
+            tabindex: "0",
+            "aria-selected": String(session.sessionId === selectedId),
+            "data-session-search": `${session.sessionId} ${title} ${profile} ${session.cwd}`.toLocaleLowerCase(),
             "data-inline-id": session.sessionId,
             "data-inline-cwd": session.cwd,
           },
-            el("td", { class: "col-id" }, sid),
+            el("td", { class: "col-id", title:session.sessionId }, sid),
             el("td", { class: "col-profile" }, profile),
             el("td", { class: "col-title" }, title),
             el("td", { class: "col-time" }, lastActive),
-            el("td", { class: "col-dir" }, dir),
+            el("td", { class: "col-dir", title:session.cwd }, dir),
             el("td", { class: "col-size" }, size),
           );
         })),
       );
-      bodyEl.appendChild(table);
+      const search=el("input",{type:"search",class:"profile-search","aria-label":dialogText("Search sessions","搜索会话"),placeholder:dialogText("Search title, ID, profile or directory","搜索标题、ID、配置或目录")}) as HTMLInputElement;
+      search.value=inlineDialog.dataset.sessionFilter ?? "";
+      const empty=el("p",{class:"inline-empty"},dialogText("No matching sessions.","没有匹配的会话。"));
+      const filter=()=>{
+        inlineDialog.dataset.sessionFilter=search.value;
+        const query=search.value.trim().toLocaleLowerCase();let visible=0;
+        table.querySelectorAll<HTMLElement>("[data-inline-id]").forEach(row=>{
+          row.hidden=!row.dataset.sessionSearch?.includes(query);
+          if(!row.hidden)visible++;
+          if(row.hidden && row.dataset.inlineId===selectedId){selectedId=null;row.classList.remove("selected");row.setAttribute("aria-selected","false");}
+        });
+        inlineDialog.dataset.selectedSessionId=selectedId ?? "";
+        empty.hidden=visible>0;updateFooter();
+      };
+      search.addEventListener("input",filter);
+      bodyEl.append(search,table,empty);filter();
 
       // Row click to select
       bodyEl.querySelectorAll<HTMLElement>(".inline-session-row-clickable").forEach((row) => {
         row.addEventListener("click", () => {
-          bodyEl.querySelectorAll<HTMLElement>(".inline-session-row-clickable").forEach((r) => r.classList.remove("selected"));
+          bodyEl.querySelectorAll<HTMLElement>(".inline-session-row-clickable").forEach((r) => {r.classList.remove("selected");r.setAttribute("aria-selected","false");});
           if (selectedId === row.dataset.inlineId) {
             selectedId = null;
           } else {
-            row.classList.add("selected");
+            row.classList.add("selected");row.setAttribute("aria-selected","true");
             selectedId = row.dataset.inlineId || null;
           }
+          inlineDialog.dataset.selectedSessionId=selectedId ?? "";
           updateFooter();
+        });
+        row.addEventListener("keydown",event=>{
+          if(event.key===" "){event.preventDefault();row.click();}
+          if(event.key==="Enter"){event.preventDefault();row.dispatchEvent(new MouseEvent("dblclick"));}
+          if(event.key==="ArrowDown"||event.key==="ArrowUp"){
+            event.preventDefault();const rows=Array.from(bodyEl.querySelectorAll<HTMLElement>("[data-inline-id]")).filter(item=>!item.hidden);
+            rows[Math.max(0,Math.min(rows.length-1,rows.indexOf(row)+(event.key==="ArrowDown"?1:-1)))]?.focus();
+          }
         });
         // Double-click: resume
         row.addEventListener("dblclick", () => {
@@ -884,12 +1032,26 @@ export function setInlineDialogState(dialogState: ChatInlineDialogState, inlineD
 // Approval dialog
 // ──────────────────────────────────────────────
 
+// Repeated snapshots of the same pending request must not erase the user's work.
+const pendingDialogSnapshots = new WeakMap<HTMLElement, string>();
+function retainPendingDialog(dialog: HTMLElement, snapshot: unknown): boolean {
+  const signature = JSON.stringify(snapshot);
+  if (pendingDialogSnapshots.get(dialog) === signature) {
+    dialog.classList.remove("hidden");
+    return true;
+  }
+  pendingDialogSnapshots.set(dialog, signature);
+  return false;
+}
+
 export function setApprovalDialogState(dialogState: ChatApprovalDialogState | null, approvalDialog: HTMLElement, vscode: { postMessage(msg: unknown): void }): void {
   if (!dialogState) {
+    pendingDialogSnapshots.delete(approvalDialog);
     approvalDialog.classList.add("hidden");
     approvalDialog.onkeydown = null;
     return;
   }
+  if (retainPendingDialog(approvalDialog, dialogState)) return;
   approvalDialog.querySelector<HTMLElement>(".tui-modal-title")!.textContent = dialogState.title;
   approvalDialog.querySelector<HTMLElement>(".tui-modal-subtitle")!.textContent = dialogState.subtitle;
   const body = approvalDialog.querySelector<HTMLElement>(".approval-dialog-body")!;
@@ -960,10 +1122,12 @@ export function setApprovalDialogState(dialogState: ChatApprovalDialogState | nu
 
 export function setAskUserDialogState(dialogState: ChatAskUserDialogState | null, askUserDialog: HTMLElement, vscode: { postMessage(msg: unknown): void }): void {
   if (!dialogState) {
+    pendingDialogSnapshots.delete(askUserDialog);
     askUserDialog.classList.add("hidden");
     askUserDialog.onkeydown = null;
     return;
   }
+  if (retainPendingDialog(askUserDialog, dialogState)) return;
   askUserDialog.querySelector<HTMLElement>(".tui-modal-title")!.textContent = dialogState.title;
   askUserDialog.querySelector<HTMLElement>(".tui-modal-subtitle")!.textContent = dialogState.subtitle;
   const tabs = askUserDialog.querySelector<HTMLElement>(".askuser-tabs")!;

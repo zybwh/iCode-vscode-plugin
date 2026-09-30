@@ -245,22 +245,36 @@ export function handleRichUsageUpdate(update: UsageUpdateNotification): void {
   if (update.sessionId && rt.currentSessionId && update.sessionId !== rt.currentSessionId) return;
   if (!isParentUsageUpdate(update, rt.currentSessionId)) {
     const messageId = update.usageSourceId ? rt.subAgentMessageIds.get(update.usageSourceId) : undefined;
-    if (messageId) rt.transcript.updateMessage(messageId, { subAgentTokens: update.totalTokens, subAgentUsageTokens: update.totalSessionTokens });
+    if (messageId && update.totalTokens !== undefined) rt.transcript.updateMessage(messageId, { subAgentTokens: update.totalTokens });
+    // Child notifications carry session-wide spend, but their context window
+    // belongs to the child and must never replace the main agent's gauge.
+    const cumulative = Object.fromEntries(Object.entries(update).filter(([key, value]) =>
+      key.startsWith("totalSession") && typeof value === "number"));
+    if (Object.keys(cumulative).length) {
+      rt.currentUsageUpdate = { ...rt.currentUsageUpdate, sessionId: rt.currentSessionId ?? update.sessionId, ...cumulative };
+      rt.chatPanel?.setState(chatPanelState());
+    }
     return;
   }
-  rt.currentUsageUpdate = update;
-  const total = update.totalTokens ?? update.totalSessionTokens;
-  if (total !== undefined) {
-    rt.currentContextUsedTokens = total;
-  }
-  rt.currentContextMaxTokens = update.maxContextTokens ?? rt.currentContextMaxTokens;
-  rt.currentContextPct = typeof update.pct === "number"
-    ? update.pct
-    : rt.currentContextMaxTokens && total !== undefined
-      ? (total / rt.currentContextMaxTokens) * 100
-      : undefined;
+  applyParentUsage(update);
   rt.chatPanel?.appendDebugEvent("UsageUpdate", rt.currentUsageText || "usage");
   rt.chatPanel?.setState(chatPanelState());
+}
+
+function applyParentUsage(update: UsageUpdateNotification): void {
+  const reported = Object.fromEntries(Object.entries(update).filter(([, value]) => value !== undefined));
+  rt.currentUsageUpdate = { ...rt.currentUsageUpdate, sessionId: update.sessionId, ...reported };
+  if (typeof update.maxContextTokens === "number" && update.maxContextTokens > 0) rt.currentContextMaxTokens = update.maxContextTokens;
+  // totalTokens is the latest context reading; totalSessionTokens is cumulative
+  // spend across invocations. There is deliberately no fallback between them.
+  if (typeof update.totalTokens === "number" && Number.isFinite(update.totalTokens) && update.totalTokens >= 0) {
+    rt.currentContextUsedTokens = update.totalTokens;
+    rt.currentContextPct = typeof update.pct === "number" && Number.isFinite(update.pct)
+      ? update.pct
+      : rt.currentContextMaxTokens ? update.totalTokens / rt.currentContextMaxTokens * 100 : undefined;
+    const pct = rt.currentContextPct === undefined ? "" : ` (${rt.currentContextPct.toFixed(1)}%)`;
+    rt.currentUsageText = `${formatCount(update.totalTokens)} tokens${pct}`;
+  }
 }
 
 export function handleAgentLoadEvent(eventName: string, update: AgentLoadNotification): void {
@@ -364,6 +378,8 @@ export function handleWorkspaceUpdated(update: WorkspaceUpdatedNotification): vo
     rt.persistCurrentSession();
     rt.sessionTreeProvider?.refresh();
   }
+  if (update.workingDirs) rt.additionalDirectories = update.workingDirs.filter(p => p !== rt.currentCwd);
+  rt.persistCurrentSession();
   rt.chatPanel?.appendDebugEvent("WorkspaceUpdated", update.primaryCwd || "(unchanged)");
   rt.transcript.appendMessage({
     id: nextMessageId(),
@@ -678,10 +694,9 @@ export function normalizeRuntimeSnapshot(
 }
 
 export function hydrateUsageFromSnapshot(snapshot: RuntimeSnapshot): void {
-  const total = snapshot.totalSessionTokens ?? snapshot.totalTokens;
-  if (total === undefined) return;
-  rt.currentUsageUpdate = {
-    sessionId: snapshot.sessionId,
+  if (snapshot.sessionId && rt.currentSessionId && snapshot.sessionId !== rt.currentSessionId) return;
+  applyParentUsage({
+    sessionId: snapshot.sessionId ?? rt.currentSessionId ?? "",
     inputTokens: snapshot.inputTokens,
     outputTokens: snapshot.outputTokens,
     totalTokens: snapshot.totalTokens,
@@ -695,16 +710,7 @@ export function hydrateUsageFromSnapshot(snapshot: RuntimeSnapshot): void {
     localTokens: snapshot.localTokens,
     calibrationRatio: snapshot.calibrationRatio,
     systemOverheadTokens: snapshot.systemOverheadTokens,
-  };
-  rt.currentContextUsedTokens = total;
-  rt.currentContextMaxTokens = snapshot.maxContextTokens ?? rt.currentContextMaxTokens;
-  rt.currentContextPct = typeof snapshot.pct === "number"
-    ? snapshot.pct
-    : rt.currentContextMaxTokens
-      ? (total / rt.currentContextMaxTokens) * 100
-      : undefined;
-  const pct = typeof rt.currentContextPct === "number" ? ` (${rt.currentContextPct.toFixed(1)}%)` : "";
-  rt.currentUsageText = total ? `${formatCount(total)} tokens${pct}` : rt.currentUsageText;
+  });
 }
 
 // ──────────────────────────────────────────────

@@ -22,6 +22,7 @@ import {
   handleCompactionNotification,
   handleContextPressure,
   handleRichUsageUpdate,
+  hydrateUsageFromSnapshot,
   handleSubAgentEvent,
   isParentUsageUpdate,
 } from "../handlers/notifications";
@@ -48,6 +49,38 @@ describe("iCode v0.22.5 notification behavior", () => {
       updateMessage: vi.fn(),
       setState: vi.fn(),
     } as never;
+  });
+
+  it("hydrates context from the current reading, never cumulative spend", () => {
+    hydrateUsageFromSnapshot({ sessionId: "session-1", totalTokens: 120, totalSessionTokens: 50000, maxContextTokens: 1000 });
+    expect(rt.currentContextUsedTokens).toBe(120);
+    expect(rt.currentContextPct).toBe(12);
+    expect(rt.currentUsageUpdate?.totalSessionTokens).toBe(50000);
+    hydrateUsageFromSnapshot({ sessionId: "session-1", totalSessionTokens: 60000 });
+    expect(rt.currentContextUsedTokens).toBe(120);
+    expect(rt.currentUsageUpdate?.totalTokens).toBe(120);
+    hydrateUsageFromSnapshot({ sessionId: "session-1", totalTokens: 0 });
+    expect(rt.currentContextUsedTokens).toBe(0);
+    expect(rt.currentUsageText).toContain("0 tokens");
+  });
+
+  it("does not manufacture context when only session spend is reported", () => {
+    handleRichUsageUpdate({ sessionId: "session-1", totalSessionTokens: 50000 });
+    expect(rt.currentContextUsedTokens).toBeUndefined();
+    expect(rt.currentContextPct).toBeUndefined();
+  });
+
+  it("updates cumulative spend from child usage without replacing the parent reading", () => {
+    rt.currentUsageUpdate = { sessionId: "session-1", totalTokens: 120 };
+    rt.currentContextUsedTokens = 120;
+    handleRichUsageUpdate({ sessionId: "session-1", usageSourceId: "child", totalTokens: 999, totalSessionTokens: 50000 });
+    expect(rt.currentContextUsedTokens).toBe(120);
+    expect(rt.currentUsageUpdate).toMatchObject({ totalTokens: 120, totalSessionTokens: 50000 });
+  });
+
+  it("ignores snapshots from a different session", () => {
+    hydrateUsageFromSnapshot({ sessionId: "other", totalTokens: 999 });
+    expect(rt.currentUsageUpdate).toBeNull();
   });
 
   it("accepts backward-compatible and session-owned usage only", () => {

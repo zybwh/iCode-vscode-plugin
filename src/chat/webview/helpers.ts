@@ -100,9 +100,8 @@ export function tokenValue(value: number | null | undefined): string {
   return typeof value === "number" ? compactTokens(value) : "-";
 }
 
-export function tokenValueOrDash(value: number | null | undefined, total?: number): string {
-  if ((total ?? 0) > 0 && (value === undefined || value === null || value === 0)) return "\u2014";
-  return typeof value === "number" ? compactTokens(value) : "\u2014";
+export function tokenValueOrDash(value: number | null | undefined): string {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0 ? (value === 0 ? "0" : compactTokens(value)) : "\u2014";
 }
 
 export function formatCountLabel(value: number, noun: string): string {

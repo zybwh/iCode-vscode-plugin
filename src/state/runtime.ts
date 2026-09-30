@@ -57,7 +57,7 @@ let runtimeSequence = 0;
 
 export class ExtensionRuntime {
   readonly tabId = `chat-${++runtimeSequence}`;
-  restoreSession: { sessionId: string; cwd: string } | null = null;
+  restoreSession: { sessionId: string; cwd: string; additionalDirectories?: string[] } | null = null;
   tabInitialization: Promise<boolean> | null = null;
   composerDraft = "";
   pendingApproval: import("../chat/panel").ChatApprovalDialogState | null = null;
@@ -82,11 +82,13 @@ export class ExtensionRuntime {
   // session identity
   currentSessionId: string | null = null;
   currentCwd: string | null = null;
+  additionalDirectories: string[] | undefined = [];
   currentSessionTitle = "";
   currentBinaryPath: string | null = null;
   activeAgentName = "Code";
   currentRuntime: RuntimeSnapshot | null = null;
   currentPromptCapabilities: PromptCapabilities | null = null;
+  supportsAdditionalDirectories = false;
   chrysCliVersion = "";
   currentApprovalMode = "auto";
   preferredAgentName = "Code";
@@ -189,11 +191,12 @@ export class ExtensionRuntime {
 
   persistCurrentSession(): void {
     if (this.extensionContext && this.currentSessionId && this.currentCwd && this.sessionManager?.sessionId === this.currentSessionId) {
-      this.restoreSession = { sessionId: this.currentSessionId, cwd: this.currentCwd };
+      this.restoreSession = { sessionId: this.currentSessionId, cwd: this.currentCwd, additionalDirectories: this.additionalDirectories && [...this.additionalDirectories] };
       if (this !== activeRuntime) return;
       this.extensionContext.workspaceState.update("chrys.session", {
         sessionId: this.currentSessionId,
         cwd: this.currentCwd,
+        additionalDirectories: this.additionalDirectories && [...this.additionalDirectories],
       });
     }
   }
@@ -276,6 +279,7 @@ export function createSessionRuntime(cwd: string): ExtensionRuntime {
   owner.outputChannel = parent.outputChannel;
   owner.sessionTreeProvider = parent.sessionTreeProvider;
   owner.currentCwd = cwd;
+  owner.additionalDirectories = cwd === parent.currentCwd ? parent.additionalDirectories && [...parent.additionalDirectories] : [];
   owner.currentTheme = parent.currentTheme;
   owner.currentBinaryPath = parent.currentBinaryPath;
   owner.preferredAgentName = parent.preferredAgentName;

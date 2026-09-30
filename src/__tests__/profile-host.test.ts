@@ -55,6 +55,7 @@ describe("profile editors before the first session", () => {
   });
   it("saves and deletes profiles without trying to reload a nonexistent session", async () => {
     await saveAgentFromDialog({ name: "Custom" });
+    expect(rt.chatPanel.setAgentDialogState).toHaveBeenLastCalledWith(expect.objectContaining({ updatedAgentName: "Custom" }));
     await deleteAgentFromDialog("Custom");
     expect(rt.sessionManager.writeAgentProfile).toHaveBeenCalledWith({ name: "Custom" });
     expect(rt.sessionManager.deleteAgentProfile).toHaveBeenCalledWith("Custom");

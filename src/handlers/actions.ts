@@ -3,7 +3,6 @@ import { showPromptHistory } from "../ui/promptHistory";
 import * as vscode from "vscode";
 import { rt } from "../state/runtime";
 import { nextMessageId } from "../chat/provider";
-import { collectEditorContext } from "../context/editor";
 import { logInfo, logWarn, logError } from "../common/logging";
 import { chatPanelState } from "../common/chatPanelState";
 import { applyPreferredDefaultsToNewSession } from "../session/defaults";
@@ -111,11 +110,7 @@ export async function handleSendMessage(text: string, blocks: ContentBlock[]): P
   rt.pendingUserEchoText = text;
   rt.pendingUserEchoMessageId = nextMessageId();
 
-  let messageBlocks = blocks;
-  const context = collectEditorContext();
-  if (context) {
-    messageBlocks = [context, ...messageBlocks];
-  }
+  const messageBlocks = blocks;
   rt.transcript.appendMessage({
     id: rt.pendingUserEchoMessageId,
     kind: "user",
@@ -211,7 +206,7 @@ export async function ensureActiveSessionForPrompt(text: string): Promise<boolea
   try {
     logInfo("Creating a new session before sending prompt.");
     rt.chatPanel?.appendDebugEvent("SessionNewStarted", `lazy prompt @ ${rt.currentCwd}`);
-    const sessionId = await sessionManager.newSession(rt.currentCwd);
+    const sessionId = await sessionManager.newSession(rt.currentCwd, rt.additionalDirectories);
     if (rt.sessionManager !== sessionManager) return false;
     rt.currentSessionId = sessionId;
     await applyPreferredDefaultsToNewSession();
@@ -345,10 +340,16 @@ async function dispatchWebviewCommand(command: ChatCommand, arg?: string): Promi
       rt.chatPanel?.dispose();
       break;
     case "attachFile":
-      await attachFileToComposer();
+      await attachFileToComposer(arg);
       break;
     case "insertFileMention":
       await insertFileMention(arg);
+      break;
+    case "trajectory":
+      await vscode.commands.executeCommand("chrys.trajectory");
+      break;
+    case "workflows":
+      await vscode.commands.executeCommand("chrys.workflows");
       break;
     case "openShell":
       openWorkspaceShell(arg);

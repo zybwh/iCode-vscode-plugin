@@ -46,9 +46,9 @@
   "views.container.title": "iCode",
   "views.sessions.name": "会话",
   "views.sessions.contextualTitle": "iCode 会话",
-  "viewsWelcome.sessions.contents": "[打开 iCode](command:chrys.focusChat)\n\nChrys 会从 `chrys.binary.path`、PATH 或平台 VSIX 内置运行时启动。",
+  "viewsWelcome.sessions.contents": "[打开 iCode](command:chrys.focusChat)\n\nChrys 会从 `chrys.binary.path`、PATH 或平台 VSIX 内置运行时启动。\n\n[下载并安装 iCode](command:chrys.installRuntime)",
   "configuration.title": "iCode",
-  "configuration.binary.path.description": "本地 chrys 可执行文件路径。留空则先使用 PATH 中的 chrys 命令，再使用平台 VSIX 内置运行时。",
+  "configuration.binary.path.description": "可选的 iCode 可执行文件路径；优先于内置、托管和 PATH 中的运行时。",
   "configuration.agent.default.description": "新 VSIX 会话的默认智能体配置。留空则回退到 CHRYS_DEFAULT_AGENT，再回退到 Code。",
   "configuration.model.profile.description": "ACP 启动后应用到新 VSIX 会话的默认模型配置 ID。留空则保持 iCode 自身模型解析不变。",
   "configuration.approval.mode.description": "工具调用的初始审批模式。",
@@ -88,5 +88,8 @@
   "configuration.ui.brand.icode.description": "显示 iCode 字样和 iC 图标（默认）。",
   "configuration.ui.brand.chrys.description": "显示 iCode 字样和 C 图标。",
   "command.showPromptHistory.title": "搜索历史输入",
-  "command.renameSession.title": "设置会话本地名称"
+  "command.renameSession.title": "设置会话本地名称",
+  "command.workflows.title": "工作流",
+  "command.trajectory.title": "用量与执行轨迹",
+  "command.installRuntime.title": "下载并安装 iCode 运行时"
 }

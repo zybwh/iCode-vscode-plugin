@@ -22,6 +22,7 @@ The extension does not replace the iCode CLI or TUI. It keeps iCode as the backe
 - Set a local session name with `/rename`, the chat editor toolbar, or the Sessions tree context menu. Names persist in this VS Code workspace and do not modify the TUI/backend title; leave the name blank to restore the automatic title.
 - Search sent text prompts with `Ctrl+R`, `/prompts`, or **iCode: Search Prompt History**. The latest 100 distinct prompts are retained in this workspace and filtered to the current directory. Selecting only fills the composer; it never sends automatically. `/history` still opens Session JSON.
 - `/clear` means **Clear Display**: conversation context, saved history, usage and plan state remain. Use `/new` for a fresh context.
+- The input area's **New** button runs Clear Display in the current webview, without opening a tab. Its tooltip explains that context is retained; it is disabled during a running task. `/new` and the Sessions New action still create independent sessions.
 - Saved session loading, deletion, session JSON access, and session summaries from the iCode Sessions TreeView.
 - Searchable agent and model profile editors, with separate in-use indicators, collapsible advanced options, and keyboard navigation.
 - Searchable iCode settings and MCP connection testing in the management page.
@@ -31,7 +32,7 @@ The extension does not replace the iCode CLI or TUI. It keeps iCode as the backe
 
 Requires VS Code 1.95 or newer, or a compatible openUBMC Studio build.
 
-1. Install the CLI following the [upstream iCode instructions](https://github.com/openJiuwen-ai/iCode#how-to-run), or obtain a matching binary from [iCode releases](https://github.com/openJiuwen-ai/iCode/releases).
+1. Choose the light VSIX with optional one-click runtime installation, or the full platform VSIX. You may also install the CLI following the [upstream iCode instructions](https://github.com/openJiuwen-ai/iCode#how-to-run), or obtain a matching binary from [iCode releases](https://github.com/openJiuwen-ai/iCode/releases).
 2. Build the plugin with the development commands below, or use a VSIX if available on [plugin releases](https://github.com/zybwh/iCode-vscode-plugin/releases). In VS Code, run **Extensions: Install from VSIX...**.
 3. Open a workspace. If the CLI is not on PATH, set `chrys.binary.path` to its absolute executable path. Configure a model profile in iCode, then run **iCode: Open iCode**.
 
@@ -39,15 +40,16 @@ Disable the old Chrys extension before enabling this extension. The new extensio
 
 ## How It Connects
 
-Install the universal VSIX when you want to manage iCode yourself, or install the platform VSIX when you want the extension to carry the matching iCode runtime. The VSIX never downloads or auto-updates iCode. It starts the selected runtime with `acp`:
+Choose one of two packages:
 
-- `chrys.binary.path`, when configured
-- `icode` on your `PATH`, with `chrys` as a compatibility fallback
-- the bundled `extension/bin/chrys` or `extension/bin/chrys.exe`, only in platform-specific VSIX packages
+- **Light (universal) VSIX:** frontend only. It detects an existing iCode installation. If none is available, choose **Download and install iCode** in the setup prompt, Sessions view, or Command Palette.
+- **Full (platform) VSIX:** includes the matching prepared runtime and uses it by default. No separate CLI installation is required.
+
+Runtime priority is **explicit `chrys.binary.path` → bundled runtime → managed installation → PATH (`icode`, then `chrys`)**. Prepared packages use `extension/runtime/`; legacy raw-binary packages use `extension/bin/chrys` or `extension/bin/chrys.exe`.
+
+Downloads require an explicit user action. The installer uses the official pinned iCode v0.28.0 offline release, verifies SHA256, and checks the version and ACP startup before activation. It supports macOS/Linux x64 and arm64, and Windows x64; selection follows the extension host, including Remote SSH/WSL. Installation goes into extension global storage with an isolated PyApp cache. It does not change PATH, replace your CLI, or automatically update iCode. Downloads need access to GitHub release assets; extraction requires the host's `tar` command (included in supported modern Windows). Failed or cancelled installs retain the previous managed runtime. Installation never interrupts an existing session; the next connection uses the selection order above.
 
 The chat header shows the connected backend as `iCode CLI vX.Y.Z`. The VSIX package version is independent and is only part of the extension package metadata shown by VS Code or openUBMC Studio.
-
-If iCode is not found, the extension prompts you to install iCode, set `chrys.binary.path`, or use a platform VSIX with a bundled runtime.
 
 Configure model profiles with iCode itself, then use `iCode: Open Model Management` or `/model` to select the profile for new VSIX sessions.
 
@@ -67,7 +69,7 @@ Configure model profiles with iCode itself, then use `iCode: Open Model Manageme
 
 ## Settings
 
-- `chrys.binary.path`: Optional absolute path to a local `icode` (or legacy `chrys`) binary. This overrides PATH and any bundled platform runtime.
+- `chrys.binary.path`: Optional absolute path to a local `icode` (or legacy `chrys`) binary. This overrides bundled, managed, and PATH runtimes.
 - `chrys.agent.default`: Default agent for new VSIX sessions.
 - `chrys.model.profile`: Default model profile applied to new VSIX sessions after ACP starts. Empty leaves iCode model resolution unchanged.
 - `chrys.approval.mode`: Initial approval mode: `manual`, `auto`, or `bypass`.
@@ -93,9 +95,21 @@ For release gating, use [VSIX Release Checklist](./RELEASE_CHECKLIST.md). It is 
 
 `npm run deploy` packages the universal VSIX and installs it into the local macOS openUBMC Studio app for dogfooding. It does not publish a marketplace or GitHub release.
 
-Release builds are manual. The CD workflow publishes a VSIX tag such as `v0.0.22-icode-v0.27.1` from a selected ref and downloads offline runtime binaries from the public [iCode releases](https://github.com/openJiuwen-ai/iCode/releases). It uses the standard GitHub Actions token; no private backend repository token is required.
+Release builds are manual. The CD workflow publishes a VSIX tag such as `v0.0.23-icode-v0.27.1` from a selected ref and downloads offline runtime binaries from the public [iCode releases](https://github.com/openJiuwen-ai/iCode/releases). It uses the standard GitHub Actions token; no private backend repository token is required.
 
 ## Current Status
+
+### Product capability gaps / 产品能力缺口
+
+**Workflow is available through `/workflow` or iCode: Workflows.** Select a discovered workflow, review user Python source, enter input and timeout, then explicitly confirm execution. This uses the installed CLI's headless command with its default agent and **BYPASS tool approvals**, in a separate session. Cancel from the progress notification or Workflow menu. Results open as JSON; the last 10 results up to 256 KiB each are kept locally in workspace state. Larger results can be saved from the editor. Requires a CLI that supports `workflow list/run --json`; Windows requires a native executable. Live node graphs, interactive approvals and saved-run recovery remain pending. Historical Usage & Trajectory is available through `/usage`, `/trajectory`, the Context sidebar, and the Command Palette. See the [capability plan](./FEATURE_PARITY.md).
+
+**通过 `/workflow` 或命令面板「iCode: 工作流」使用 Workflow。** 选择工作流、检查用户 Python 源码、填写输入和超时，再明确确认运行。此入口使用 CLI 默认智能体，**绕过逐项工具审批**，创建独立于聊天的会话。可在进度通知或工作流菜单中取消。结果以 JSON 打开，本地工作区保留最近 10 次、每次不超过 256 KiB 的结果，大型结果可在编辑器另存。需要支持 `workflow list/run --json` 的 CLI，Windows 需要原生可执行文件。实时节点图、交互审批和运行恢复仍待补齐。历史用量和执行轨迹已接入 `/usage`、`/trajectory`、上下文侧栏及命令面板。
+
+Agent editing now includes collapsible JSON sections for model binding, tools/MCP/web, approvals, sub-agents, skills, memory, compaction and external ACP agents. Existing identity, unknown fields and masked secrets are retained. These are advanced configuration editors; guided forms remain follow-up work. `$` and `＄` open model selection. Closed Mermaid code blocks render automatically as compact terminal-style diagrams in the chat theme, with collapsible source. Flowchart, state, sequence, class, ER and XY diagrams are supported; unsupported syntax (including right-to-left flowcharts), incomplete or oversized blocks retain readable source.
+
+智能体编辑器新增可折叠的高级 JSON 分区，覆盖模型绑定、工具/MCP/网络、审批、子智能体、技能、记忆、压缩和外部 ACP 智能体；保留已有身份、未知字段和脱敏密钥。引导式表单仍待补齐。输入 `$` 或 `＄` 可选择模型；Mermaid 代码块闭合后自动显示为随聊天主题配色的紧凑字符图，源码折叠保留。支持流程、状态、时序、类、实体关系和 XY 图；暂不支持的语法（包括从右向左的流程图）、未完成或过大的图保留源码。
+
+The complete [iCode user guide](https://github.com/openJiuwen-ai/iCode/blob/main/docs/en/start/what-is-icode.md) and [中文用户指南](https://github.com/openJiuwen-ai/iCode/blob/main/docs/zh-Hans/start/what-is-icode.md) cover workflow authoring and configuration beyond the extension's command help.
 
 This VSIX is a standalone frontend release. The universal package does not include iCode. Platform packages may include release-built PyApp binaries for the matching OS/architecture, but they must not depend on private ACP patches. Backend protocol gaps that do not block normal coding-agent workflows are tracked separately and are not release blockers by default.
 
@@ -111,7 +125,7 @@ Known deferred areas:
 
 需要 VS Code 1.95 或更新版本，或兼容的 openUBMC Studio。
 
-1. 按照 [iCode 上游说明](https://github.com/openJiuwen-ai/iCode#how-to-run)安装 CLI，或从 [iCode Releases](https://github.com/openJiuwen-ai/iCode/releases) 获取对应平台的运行时。
+1. 选择轻量版并按需一键安装运行时，或直接使用完整平台版。也可按照 [iCode 上游说明](https://github.com/openJiuwen-ai/iCode#how-to-run)安装 CLI，或从 [iCode Releases](https://github.com/openJiuwen-ai/iCode/releases) 获取对应平台的运行时。
 2. 使用下方开发命令构建插件，或在[插件 Releases](https://github.com/zybwh/iCode-vscode-plugin/releases) 有可用版本时下载 VSIX。在 VS Code 中运行 **Extensions: Install from VSIX...** 安装。
 3. 打开工作区。如果 CLI 不在 PATH 中，将 `chrys.binary.path` 设置为可执行文件的绝对路径。在 iCode 中配置模型后，运行 **iCode: 打开 iCode**。
 
@@ -121,7 +135,11 @@ Known deferred areas:
 
 iCode 是一个完整的 coding-agent 平台，由 iCode CLI 承载运行时，支持配置驱动的智能体、工具调用、审批门控、上下文管理、会话持久化、回滚、MCP、技能和子智能体。iCode VS Code 扩展是这个平台的编辑器前端，通过 ACP 连接用户配置、PATH 或平台 VSIX 内置的 iCode CLI，把聊天、工具进度、审批、差异查看、回滚、会话、模型/智能体管理和工作区文件操作带进 VS Code。
 
-如果安装通用 VSIX，请先单独安装 iCode CLI。扩展不会下载或自动更新 iCode；它会优先使用 `chrys.binary.path`，然后依次查找 PATH 中的 `icode`、`chrys` 命令，最后才使用平台 VSIX 内置的 `extension/bin/chrys` 或 `extension/bin/chrys.exe`。如果找不到 iCode，扩展会提示先安装、设置可执行文件路径，或换用内置运行时的平台 VSIX。
+插件分为两种：**轻量通用版**只带前端，自动查找已有 iCode，缺失时可在提示框、会话视图或命令面板点击“下载并安装 iCode”；**完整平台版**带有对应平台的预备运行时，默认直接使用。
+
+运行时优先级为：**显式 `chrys.binary.path` → 内置运行时 → 插件托管安装 → PATH（先 `icode`，后 `chrys`）**。完整包使用 `extension/runtime/`，兼容旧包的 `extension/bin/chrys` 或 `chrys.exe`。
+
+下载必须由用户主动触发，固定使用官方 iCode v0.28.0 离线版本，校验 SHA256 并验证版本及 ACP 启动后才启用。支持 macOS/Linux 的 x64、arm64，以及 Windows x64；按扩展宿主选择平台，包括 Remote SSH/WSL。安装位置为扩展全局存储，使用独立 PyApp 缓存，不修改 PATH、不覆盖用户 CLI、不自动更新。下载需要能访问 GitHub Release 资源；解压使用宿主的 `tar` 命令（现代 Windows 自带）。失败或取消保留原托管运行时；安装不会中断当前会话，下次连接按上述优先级选择。
 
 界面中显示的运行时版本来自后端，会写成 `iCode CLI vX.Y.Z`。VSIX 自己的包版本是独立的，只作为 VS Code 或 openUBMC Studio 插件页里的扩展元数据。
 
@@ -136,6 +154,7 @@ iCode 是一个完整的 coding-agent 平台，由 iCode CLI 承载运行时，�
 - `/rename`、聊天编辑器工具栏和会话树右键菜单可设置会话本地名称，保存在当前 VS Code 工作区，不修改 TUI／后端标题；留空恢复自动标题。
 - `Ctrl+R`、`/prompts` 或“iCode: 搜索历史输入”可检索当前目录的历史提示词。此工作区最多保留最近 100 条不同的已发送文本，跨 Tab 可用；选择后只填回输入框，不自动发送。`/history` 仍用于查看会话 JSON。
 - `/clear` 明确表示“清空显示”，保留会话上下文、保存的历史、用量和计划；需要新上下文时使用 `/new`。
+- 输入区的“新建”按钮在当前 webview 清空显示，不再打开新标签；提示文字注明保留上下文，任务运行时禁用。`/new` 和会话列表的新建入口仍创建独立会话。
 - 每个会话独立占用一个编辑器 Tab，可在任务运行时新建或打开其他会话。重复打开会话会定位到已有 Tab；标题显示运行中、待审批、待回答和已完成。关闭 Tab 保留后台任务与待处理问题，重新打开恢复对话和文本草稿。
 - 聊天输入支持 TUI 风格触发：`/` 命令、`@` 文件、`#` 智能体、`!` 终端，并支持全角 `／`、`＠`、`＃`、`！`。
 - VSIX 不复刻 TUI 的 F-key/footer 快捷按钮；会话、模型、日志、主题等入口使用 slash 命令、Command Palette、TreeView 和 VS Code 原生界面。
@@ -172,9 +191,9 @@ npm run build
 npm run package
 ```
 
-The package command requires [uv](https://github.com/astral-sh/uv) and writes `icode-vscode-plugin-0.0.22.vsix`. The universal VSIX does not bundle the CLI. `npm run deploy` installs it into the local macOS openUBMC Studio application.
+The package command requires [uv](https://github.com/astral-sh/uv) and writes `icode-vscode-plugin-0.0.23.vsix`. The universal VSIX does not bundle the CLI. `npm run deploy` installs it into the local macOS openUBMC Studio application.
 
-打包需要 [uv](https://github.com/astral-sh/uv)，输出 `icode-vscode-plugin-0.0.22.vsix`。通用包不包含 CLI；`npm run deploy` 会安装到本机 macOS 的 openUBMC Studio。
+打包需要 [uv](https://github.com/astral-sh/uv)，输出 `icode-vscode-plugin-0.0.23.vsix`。通用包不包含 CLI；`npm run deploy` 会安装到本机 macOS 的 openUBMC Studio。
 
 For integration tests, set `ICODE_BINARY_PATH` to the iCode executable and run `npm run test:integration`. The default expected CLI version is 0.27.1; override it with `ICODE_EXPECTED_VERSION` when testing another release. Model-backed tests require a configured model profile.
 
@@ -206,3 +225,41 @@ inventory checked by the packer.
 和 [licenses/](./licenses/)；伙伴素材来源见 [ASSET_PROVENANCE.md](./ASSET_PROVENANCE.md)。
 平台包保留后端许可文件；使用 `--binary` 打包时，二进制旁必须提供上游 `LICENSE`
 和 `NOTICE`。打包前运行 `npm run build`，以更新打包器校验的依赖清单。
+
+### Usage & Trajectory / 用量与执行轨迹
+
+The Context sidebar separates the latest main-agent context reading, cumulative session spend (including sub-agents), and the main agent's latest input/output/cache readings. Latest readings are not full-turn totals. A reported zero stays `0`; missing data is `—`. Local token counts and system overhead are labelled as estimates. ACP does not identify every provider estimate, so these live readings are not labelled exact.
+
+`/usage` or `/trajectory` opens historical analysis for the current session, paged saved sessions, a session ID, or an events JSONL file. The installed CLI's public `trajectory export` command supplies timing, parallelism, input/output/reasoning/cache-read/cache-write metrics and expandable per-turn and Workflow timelines. Exact, estimated, missing and unresolved metrics retain their backend precision and reasons. These are snapshots: reopen to refresh. Export JSON, CSV, findings CSV or Perfetto; default backend path redaction remains enabled. Large reports can be exported in full; the view shows at most 200 turns, 100 Workflow runs and 300 operations per timeline. Provider/model attribution is not inferred when absent from the export.
+
+上下文侧栏分别展示主智能体最新上下文读数、会话累计消耗（含子智能体），以及主智能体最新输入/输出/缓存读数；最新读数不是整轮统计。已上报的零显示 `0`，缺失显示 `—`，本地 Token 和系统开销标明估算。
+
+`/usage` 或 `/trajectory` 可分析当前会话、分页选择的历史会话、指定会话 ID 或事件 JSONL 文件。通过 CLI 正式导出接口显示耗时、并行度、输入/输出/推理/缓存读写用量，以及可展开的逐轮和 Workflow 时间线，保留精确、估算、缺失、未确定及其原因。报告是历史快照，重新打开可刷新。支持 JSON、CSV、分析发现 CSV 和 Perfetto 导出，保持后端默认路径脱敏。视图最多显示 200 轮、100 次 Workflow 运行、每条时间线 300 项操作，完整数据仍可导出；没有后端归属信息时不推断模型分类。
+
+Trajectory uses the TUI dashboard layout: Overview / Timeline / Insights / Session data tabs, compact monospace section frames, per-turn selection and coloured hierarchical timeline lanes. Overview activity uses recorded, possibly overlapping operations: the CLI export does not supply the TUI's exclusive wall-time slices. Skill/MCP rollups and complete session storage metadata remain unavailable in this export.
+
+轨迹界面按 TUI 仪表盘布局展示：概览 / 时间线 / 洞察 / 会话数据标签、等宽字体细线分区、轮次切换和彩色层级时间线。概览活动条显示允许重叠的已记录操作；CLI 未导出 TUI 的互斥耗时切片、Skill/MCP 汇总及完整会话存储信息，相关位置明确标为缺失。
+
+### Changes, scope and explicit context / 变更、范围与显式上下文
+
+- `/diff` opens the TUI-style change browser: whole session or one turn, file list, line numbers, unified/split previews and native editor opening. `/rollback last 2` discards two turns; `/rollback to 2` keeps two. Both show a cumulative reverse preview and require confirmation; adding `revert` cannot bypass it. Files without ACP content or with unsafe provenance are excluded from selection.
+- `/roots` selects extra directories explicitly; the workspace indicator shows their count and full paths. Choices persist through new/load. Updating an existing idle session reloads only that tab's ACP process.
+- `/attach`, `/selection`, `/problems` create removable composer chips. File/selection paths include line ranges. The plugin no longer silently sends the active editor with every prompt.
+- Agent configuration has TUI-style section tabs and guided fields, repeatable MCP/sub-agent entries, plus advanced JSON. `/trajectory` supports in-place refresh, operation details and a terminal dependency graph when exported edges are available.
+
+- `/diff` 打开与 TUI 对齐的变更浏览器：按会话或轮次筛选、文件列表、行号、合并/分栏预览，也可在编辑器打开。`/rollback last 2` 丢弃最近两轮；`/rollback to 2` 保留前两轮。回滚展示累计反向差异并要求确认，`revert` 不能跳过确认；缺少内容或归属不安全的文件不进入还原选择。
+- `/roots` 显式选择额外目录，工作区指示器显示数量与完整路径；新建和恢复会话保留选择。修改已有空闲会话的范围只重载该标签页的 ACP 进程。
+- `/attach`、`/selection`、`/problems` 添加可移除的附件标签，文件和选区带行号范围；不再隐式发送活动编辑器内容。
+- 智能体配置提供 TUI 风格分区标签、常用字段表单、MCP/子智能体增删以及高级 JSON。轨迹页可原地刷新、展开操作详情，并在导出提供依赖边时显示终端风格依赖图。
+
+Advanced Agent configuration includes MCP headers/environment and loading limits, inline Skills with resources/scripts, typed external ACP options and search-provider mappings. Arbitrary HTTP request templates retain JSON editing. Persisted session fork, cross-client titles, approval argument editing and interrupted-run recovery still require [public ACP contracts](https://github.com/openJiuwen-ai/iCode/issues/5).
+
+智能体高级配置现已支持 MCP 请求头/环境变量与加载限制、内联技能及其资源/脚本、外部 ACP 类型化选项和搜索提供商映射；任意 HTTP 请求模板保留 JSON 编辑。持久化会话分叉、跨客户端标题、审批参数编辑和中断执行恢复仍需要[公开 ACP 接口](https://github.com/openJiuwen-ai/iCode/issues/5)。
+
+Agent editing now retains per-profile drafts within the current webview, offers Clone and Discard, and prevents a stale draft from overwriting a refreshed profile. Clone creates a new profile only on Save; masked credentials must be re-entered. Session search supports full IDs, titles, profiles and directories. Repeated pending approval/AskUser updates retain typed input.
+
+智能体编辑支持当前 webview 内的逐配置草稿保留、复制配置和放弃修改，并阻止旧草稿覆盖刷新后的配置。复制后须保存才会创建新配置，脱敏凭据需重新填写。会话支持按完整 ID、标题、配置和目录搜索；同一待处理审批/AskUser 请求重复刷新时保留输入。
+
+`npm run package` rebuilds the frontend before packaging, so local packaging and deployment include current sources.
+
+`npm run package` 会先重新构建前端，保证本地打包与部署包含当前代码。

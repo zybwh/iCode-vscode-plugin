@@ -1,3 +1,4 @@
+import type { TextAttachment } from "../context/attachments";
 import type { CompanionViewState } from "../companion/types";
 import * as vscode from "vscode";
 import type { ChatMessage } from "./provider";
@@ -19,6 +20,7 @@ export interface ChatModelDialogState {
 }
 
 export interface ChatAgentDialogState {
+  updatedAgentName?: string;
   agents: ProfileSummary[];
   profiles: Record<string, Record<string, unknown>>;
   activeAgentName: string;
@@ -136,6 +138,7 @@ export type HostMessage =
   | { type: "clearMessages" }
   | { type: "setState"; state: ChatPanelState }
   | { type: "setComposer"; text: string }
+  | { type: "addTextAttachment"; attachment: TextAttachment }
   | { type: "reconnectNotice" }
   | { type: "debugEvent"; kind: string; detail: string }
   | { type: "localCommand"; command: "notifications" }
@@ -159,7 +162,7 @@ export type HostMessage =
 
 type WebviewMessage =
   | { type: "composerDraft"; text: string }
-  | { type: "sendMessage"; text: string; images?: Array<{ data: string; mimeType: string; uri?: string; _meta?: Record<string, unknown> }> }
+  | { type: "sendMessage"; text: string; attachments?: TextAttachment[]; images?: Array<{ data: string; mimeType: string; uri?: string; _meta?: Record<string, unknown> }> }
   | { type: "cancel" }
   | {
       type: "command";
@@ -209,6 +212,12 @@ export interface ChatPanelState {
   sessionState: "idle" | "running" | "cancelling";
   platformLabel?: string;
   usageText?: string;
+  latestInputTokens?: number;
+  latestOutputTokens?: number;
+  latestCacheHitTokens?: number;
+  localTokens?: number;
+  calibrationRatio?: number;
+  systemOverheadTokens?: number;
   contextUsedTokens?: number;
   contextMaxTokens?: number;
   contextPct?: number;
@@ -223,6 +232,7 @@ export interface ChatPanelState {
   committedCompactionCount?: number;
   approvalMode?: string;
   workspacePath?: string;
+  additionalDirectories?: string[];
   toolCount?: number;
   fileCount?: number;
   mcpTools?: Record<string, string[]>;
@@ -281,6 +291,8 @@ export type ChatCommand =
   | "manageAgents"
   | "diagnostics"
   | "copySupportBundle"
+  | "trajectory"
+  | "workflows"
   | "doctor"
   | "companionCommand"
   | "summonCompanion"
@@ -382,8 +394,10 @@ export class ChatPanel {
             }
             this.appendDebugEvent("ImageSend", `${msg.images.length} image(s)`);
           }
+          if (msg.attachments?.length && rt.sessionManager?.state !== "idle") break;
           this._sendHandler?.(msg.text, [
             { type: "text", text: msg.text },
+            ...(msg.attachments ?? []).slice(0,20).filter(a=>typeof a.text==="string").map(a=>({type:"text" as const,text:a.text.slice(0,120000)})),
             ...(msg.images ?? []).map((image) => ({ type: "image" as const, ...image })),
           ]);
           break;
@@ -625,6 +639,10 @@ export class ChatPanel {
     this.updateTitle();
     const companion = state.companion ? { ...state.companion, assetBaseUri: state.companion.assetBaseUri || this.companionAssetBaseUri } : state.companion;
     this._post({ type: "setState", state: { ...state, companion } });
+  }
+
+  addTextAttachment(attachment: TextAttachment): void {
+    this._post({type:"addTextAttachment",attachment});
   }
 
   setComposer(text: string): void {
