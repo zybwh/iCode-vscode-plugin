@@ -1835,7 +1835,7 @@ export async function runDoctor(): Promise<void> {
       await copyRecentLogsFromDoctor();
       break;
     case "logs":
-      await openLogsDialog();
+      openLogsDialog();
       break;
     case "binarySettings":
       await vscode.commands.executeCommand("workbench.action.openSettings", "chrys.binary.path");

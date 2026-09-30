@@ -393,7 +393,7 @@ async function onConnected(
 
   // Listen for session updates
   client.onSessionUpdate(bindRuntime((sessionId, update) => {
-    handleSessionUpdate(sessionId, update);
+    void handleSessionUpdate(sessionId, update);
   }));
 
   rt.sessionInitialization = initializeActiveSession(context);

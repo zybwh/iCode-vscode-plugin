@@ -3640,7 +3640,7 @@ function copyCurrentSessionId(): void {
     return;
   }
   const write = navigator.clipboard?.writeText(sessionId);
-  if (!write) {
+  if (write === undefined) {
     showLocalNotice(t("copyFailed"));
     return;
   }
