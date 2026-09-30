@@ -222,6 +222,12 @@ export function finishActiveToolGroup(collapse: boolean, statusBar: HTMLElement)
 }
 
 export function updateToolGroup(group: ToolGroupState, statusBar: HTMLElement): void {
+  // A queued details toggle may arrive after the transcript has been cleared.
+  if (!group.root.isConnected) {
+    if (group.timer !== undefined) window.clearInterval(group.timer);
+    group.timer = undefined;
+    return;
+  }
   const groupMessages = group.ids
     .map((id) => state.messageById.get(id))
     .filter((message): message is ChatMessage => message !== undefined);

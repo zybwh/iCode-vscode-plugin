@@ -61,7 +61,7 @@ export async function handleSendMessage(text: string, blocks: ContentBlock[]): P
       "iCode runtime is not connected yet. Open Doctor to check the binary, workspace, and ACP process.",
       "iCode 运行时尚未连接。请打开健康检查，确认可执行文件、工作区和 ACP 进程状态。",
     );
-    rt.chatPanel?.setComposer(text);
+    rt.chatPanel?.setComposer(text, { restore: true });
     rt.transcript.appendMessage({
       id: nextMessageId(),
       kind: "error",
@@ -102,7 +102,7 @@ export async function handleSendMessage(text: string, blocks: ContentBlock[]): P
       if (!ownsTurn()) return;
       const msg = err instanceof Error ? err.message : String(err);
       logError(`Injection failed: ${msg}`);
-      rt.chatPanel?.setComposer(text);
+      rt.chatPanel?.setComposer(text, { restore: true });
       rt.transcript.appendMessage({
         id: nextMessageId(),
         kind: "error",
@@ -194,7 +194,7 @@ export async function ensureActiveSessionForPrompt(text: string): Promise<boolea
     }
   }
   if (rt.sessionManager.state !== "idle") {
-    rt.chatPanel?.setComposer(text);
+    rt.chatPanel?.setComposer(text, { restore: true });
     rt.transcript.appendMessage({
       id: nextMessageId(),
       kind: "separator",
@@ -205,7 +205,7 @@ export async function ensureActiveSessionForPrompt(text: string): Promise<boolea
     return false;
   }
   if (!rt.currentCwd) {
-    rt.chatPanel?.setComposer(text);
+    rt.chatPanel?.setComposer(text, { restore: true });
     rt.transcript.appendMessage({
       id: nextMessageId(),
       kind: "error",
@@ -229,7 +229,7 @@ export async function ensureActiveSessionForPrompt(text: string): Promise<boolea
     const message = error instanceof Error ? error.message : String(error);
     logError(`Failed to create session before prompt: ${message}`);
     rt.chatPanel?.appendDebugEvent("SessionNewFailed", message);
-    rt.chatPanel?.setComposer(text);
+    rt.chatPanel?.setComposer(text, { restore: true });
     rt.transcript.appendMessage({
       id: nextMessageId(),
       kind: "error",

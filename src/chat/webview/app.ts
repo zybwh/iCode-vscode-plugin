@@ -838,6 +838,8 @@ sidebarContent.addEventListener("click", (event) => {
   if (messageLink?.dataset.messageId) {
     const jumpTarget = state.messageMap.get(messageLink.dataset.messageId);
     if (jumpTarget) {
+      state.messageScrollAnchored = false;
+      state.forceFollowNextMessage = false;
       jumpTarget.scrollIntoView({ behavior: prefersReducedMotion() ? "auto" : "smooth", block: "center" });
       jumpTarget.classList.add("flash-highlight");
       setTimeout(() => jumpTarget.classList.remove("flash-highlight"), 1500);
@@ -1001,8 +1003,13 @@ messageArea.addEventListener("contextmenu", (event) => {
   event.preventDefault();
   copyMessageById(messageId);
 });
+let lastMessageScrollTop = 0;
 messageArea.addEventListener("scroll", () => {
-  state.messageScrollAnchored = isMessageAreaAtBottom(messageArea);
+  // A programmatic scroll event may arrive after more content grew. Being away
+  // from the new bottom alone is not evidence that the user scrolled upwards.
+  if (isMessageAreaAtBottom(messageArea)) state.messageScrollAnchored = true;
+  else if (messageArea.scrollTop < lastMessageScrollTop) state.messageScrollAnchored = false;
+  lastMessageScrollTop = messageArea.scrollTop;
 }, { passive: true });
 new MutationObserver(() => {
   scheduleMessageAnchorSync(state.messageScrollAnchored, messageArea);
@@ -1063,7 +1070,7 @@ window.addEventListener("message", (e) => {
       renderPendingImages(); updateComposerState();
       break;
     case "setComposer":
-      setComposer(msg.text);
+      setComposer(msg.text, msg.restore);
       break;
     case "reconnectNotice":
       showReconnect();
@@ -1122,6 +1129,8 @@ window.addEventListener("message", (e) => {
 // ──────────────────────────────────────────────
 
 let userTurnCount = 0;
+const pendingTextRenders = new Set<string>();
+let textRenderScheduled = false;
 
 // Mermaid fences render as source until the lazily loaded engine arrives; then redraw them.
 onDiagramEngineReady(() => {
@@ -1185,6 +1194,7 @@ function refreshSideTabAfterMessage(msg: ChatMessage): void {
 }
 
 function updateMessage(msgId: string, patch: Partial<ChatMessage>): void {
+  pendingTextRenders.delete(msgId);
   const message = state.messageById.get(msgId);
   if (!message) return;
   // The scroll listener keeps the anchor current; avoid a forced layout read per update.
@@ -1211,14 +1221,22 @@ function markCopyableMessageElement(msg: ChatMessage, element: HTMLElement): voi
 function updateMessageTextOnly(msgId: string, text: string): void {
   const message = state.messageById.get(msgId);
   if (!message || message.text === text) return;
-  const shouldFollow = state.messageScrollAnchored;
+  // Keep the model current for copying even while browser painting is deferred.
   message.text = text;
-  const existing = state.messageMap.get(msgId);
-  if (!existing) return;
-  const bubbleContent = existing.querySelector<HTMLElement>(".bubble-content");
-  if (!bubbleContent) return;
-  renderMessageTextUpdate(message, bubbleContent);
-  scheduleMessageAnchorSync(shouldFollow, messageArea);
+  pendingTextRenders.add(msgId);
+  if (textRenderScheduled) return;
+  textRenderScheduled = true;
+  requestAnimationFrame(() => {
+    textRenderScheduled = false;
+    const shouldFollow = state.messageScrollAnchored;
+    for (const id of pendingTextRenders) {
+      const message = state.messageById.get(id);
+      const content = state.messageMap.get(id)?.querySelector<HTMLElement>(".bubble-content");
+      if (message && content) renderMessageTextUpdate(message, content);
+    }
+    pendingTextRenders.clear();
+    scheduleMessageAnchorSync(shouldFollow, messageArea);
+  });
 }
 
 function renderMessageTextUpdate(message: ChatMessage, bubbleContent: HTMLElement): void {
@@ -1238,6 +1256,7 @@ function renderMessageTextUpdate(message: ChatMessage, bubbleContent: HTMLElemen
 }
 
 function removeMessage(msgId: string): void {
+  pendingTextRenders.delete(msgId);
   const idx = state.messages.findIndex((message) => message.id === msgId);
   if (idx >= 0) state.messages.splice(idx, 1);
   state.messageById.delete(msgId);
@@ -1256,12 +1275,18 @@ function removeMessage(msgId: string): void {
 }
 
 function clearMessages(): void {
+  pendingTextRenders.clear();
+  for (const group of new Set(state.toolGroupByMessageId.values())) {
+    if (group.timer !== undefined) window.clearInterval(group.timer);
+    group.timer = undefined;
+  }
   state.messages.length = 0;
   state.messageById.clear();
   state.messageMap.clear();
   state.toolGroupByMessageId.clear();
   state.activeToolGroup = null;
   userTurnCount = 0;
+  lastMessageScrollTop = 0;
   messageArea.innerHTML = "";
   messageArea.appendChild(createWelcomeElement());
   state.messageScrollAnchored = true;
@@ -2889,14 +2914,20 @@ function renderSlashSuggestion(suggestion: SlashSuggestion): HTMLElement {
 // Composer state
 // ──────────────────────────────────────────────
 
-function setComposer(text: string): void {
+function setComposer(text: string, restore = false): void {
+  // A queued injection still owns its disabled draft; an editable new draft belongs to the user.
+  const emptyDraft = inputField.value.length === 0 && !state.isComposingText
+    && !pendingImages.length && !pendingAttachments.length && !preparingImageCount;
+  const mayReplace = !restore || state.queuedInjectionPending || emptyDraft;
   state.localSubmitPending = false;
   state.queuedInjectionPending = false;
-  clearPendingImages();
   inputField.disabled = false;
-  inputField.value = text;
+  if (mayReplace) {
+    clearPendingImages();
+    if (inputField.value !== text) inputField.value = text;
+  }
   updateComposerState();
-  inputField.focus();
+  if (mayReplace) inputField.focus();
   autoResizeInput();
 }
 

@@ -2,7 +2,7 @@
   "name": "icode-vscode-plugin",
   "displayName": "iCode",
   "description": "%extension.description%",
-  "version": "0.0.29",
+  "version": "0.0.30",
   "publisher": "icode",
   "license": "Apache-2.0",
   "repository": {
@@ -565,7 +565,8 @@
     "package": "npm run build && uv run python scripts/pack.py",
     "deploy": "npm run package && '/Applications/openUBMC Studio.app/Contents/Resources/app/bin/studio' --install-extension icode-vscode-plugin-$npm_package_version.vsix --force && echo 'Deployed OK，重启 Studio 窗口生效'",
     "test:packaging": "uv run python -m unittest discover -s tests/packaging",
-    "test:runtime": "vitest run tests/integration --testTimeout=60000 -t \"Packaged runtime startup\""
+    "test:runtime": "vitest run tests/integration --testTimeout=60000 -t \"Packaged runtime startup\"",
+    "test:webview": "npm run compile:webview && uv run tests/webview/browser.py"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

@@ -402,10 +402,10 @@ export function handleUserInjectResult(update: UserInjectResultNotification): vo
       isInjection: true,
       timestamp,
     });
-    rt.chatPanel?.setComposer("");
+    rt.chatPanel?.setComposer("", { restore: true });
     return;
   }
-  rt.chatPanel?.setComposer(update.text);
+  rt.chatPanel?.setComposer(update.text, { restore: true });
 }
 
 export function handleRollbackResult(update: RollbackResultNotification): void {
@@ -427,7 +427,7 @@ export function handleRollbackResult(update: RollbackResultNotification): void {
     timestamp: Date.now(),
   });
   if (update.rolledBackUserText) {
-    rt.chatPanel?.setComposer(update.rolledBackUserText);
+    rt.chatPanel?.setComposer(update.rolledBackUserText, { restore: true });
   }
   rt.chatPanel?.setState(chatPanelState());
 }

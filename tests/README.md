@@ -67,3 +67,43 @@ preserve content, and removing the payload must change the comparison. These are
 synthetic frontend fixtures, not proof of backend tool execution or browser layout.
 `backend-restart.test.ts` also verifies pending approval and AskUser settlement
 before handler replacement. Both files run with `npm test`.
+
+## TUI-derived interaction and layout regressions
+
+These cases adapt behavior from iCode revision
+`bb45692104bc1d26882729e90fc145e3a114e066`, under `tests/app/tui/`:
+
+| Upstream reference | VSIX regression |
+| --- | --- |
+| `widgets/test_input_bar.py` | Delayed restoration cannot overwrite a new draft, including whitespace; preserve caret and IME submission behavior. |
+| `widgets/test_tool_group_coalescing.py` | Late/out-of-order results stay in their owning group; user turns keep live/replay groups separate. |
+| `behaviors/test_main_screen_copy.py` | Copy original markup, whitespace and image-message text; selected text wins. VSIX retains its existing role prefix. |
+| `widgets/chat/test_streamed_answer_burst.py` | A burst parses once per animation frame while copy reads the latest source; final patches and transcript replacement defeat stale work. |
+| `widgets/chat/test_running_card_ticks.py` | Timer ticks retain card nodes, folded output stays current, and transcript clearing retires timers. |
+| `widgets/test_chat_panel_scroll.py` | User scrolling and sidebar navigation win over pending auto-follow callbacks; returning to the bottom resumes following. |
+
+`src/__tests__/webview-tui-regressions.test.ts` runs in the normal `npm test`
+suite with the actual webview app, synthetic host messages, clipboard assertions,
+and controlled animation frames. Host lifecycle tests cover restored draft storage.
+They do not rely on Python, the upstream checkout, or a model.
+
+For real layout, install the pinned test browser once, then run:
+
+```sh
+uv run tests/webview/browser.py --install
+npm run test:webview
+```
+
+On Linux CI, installation also uses `--with-deps`. The Python script declares its
+own Playwright version and Python range. This command builds the production
+webview JS/CSS, then uses headless Chromium with only `acquireVsCodeApi` mocked.
+Each case owns an isolated browser context. It verifies scrolling during streaming
+and composer resizing, sidebar navigation against queued bottom corrections,
+real caret/focus, and English/Chinese narrow-screen composer/drawer behavior.
+Waits use observable state and browser animation frames rather than fixed sleeps.
+CI runs this as a separate browser job. Missing browser setup fails explicitly.
+
+This is browser rendering coverage, not a VS Code extension-host or backend E2E
+suite. Textual internals, terminal cell geometry, and TUI-specific presentation
+policies are not ported. Link edge cases, expanded pseudo-locales, configuration
+validation matrices and incremental history loading remain separate follow-ups.
