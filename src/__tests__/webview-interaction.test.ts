@@ -87,6 +87,7 @@ describe("chat webview interactions", () => {
     expect(document.querySelectorAll("[data-copy-message-id]")).toHaveLength(3);
     expect(document.querySelectorAll(".sidebar-message-list [data-message-id]")).toHaveLength(2);
     host({ type: "updateMessageTextOnly", messageId: "a1", text: "answer, continued" });
+    vi.advanceTimersByTime(32);
     expect(document.querySelector('[data-copy-message-id="a1"]')?.textContent).toContain("answer, continued");
   });
 

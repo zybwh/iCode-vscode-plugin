@@ -1011,6 +1011,11 @@ messageArea.addEventListener("scroll", () => {
   else if (messageArea.scrollTop < lastMessageScrollTop) state.messageScrollAnchored = false;
   lastMessageScrollTop = messageArea.scrollTop;
 }, { passive: true });
+// content-visibility can replace estimated heights after scrolling without a DOM
+// mutation or container resize. Re-anchor when those deferred layouts become real.
+messageArea.addEventListener("contentvisibilityautostatechange", () => {
+  scheduleMessageAnchorSync(state.messageScrollAnchored, messageArea);
+}, { capture: true });
 new MutationObserver(() => {
   scheduleMessageAnchorSync(state.messageScrollAnchored, messageArea);
 }).observe(messageArea, { childList: true, subtree: true, characterData: true });
