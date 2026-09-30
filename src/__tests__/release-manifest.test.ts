@@ -23,6 +23,11 @@ function readSource(...segments: string[]): string {
   return fs.readFileSync(path.join(extensionRoot, ...segments), "utf8").replace(/\r\n/g, "\n");
 }
 
+/** The extension entry plus the backend and session-command modules split out of it. */
+function readExtensionSource(): string {
+  return ["extension.ts", "backendConnection.ts", "sessionCommands.ts"].map((name) => readSource("src", name)).join("\n");
+}
+
 /** The chat webview entry plus the catalogues split out of it. */
 function readWebviewAppSource(): string {
   return ["app.ts", "uiText.ts", "slashCommands.ts", "themes.ts"]
@@ -456,7 +461,7 @@ describe("VSIX release manifest", () => {
   });
 
   it("resolves configured, bundled, managed, then PATH runtimes", () => {
-    const source = readSource("src/extension.ts");
+    const source = readExtensionSource();
     const resolver = readSource("src/runtime/resolve.ts");
     expect(source).toContain("resolveRuntime(");
     expect(source).toContain("managedRuntime(context.globalStorageUri.fsPath)");
@@ -526,7 +531,7 @@ describe("VSIX release manifest", () => {
   });
 
   it("times out ACP initialization failures instead of hanging the frontend", () => {
-    const source = fs.readFileSync(path.join(extensionRoot, "src", "extension.ts"), "utf8");
+    const source = readExtensionSource();
     const protocolSource = fs.readFileSync(path.join(extensionRoot, "src", "acp", "protocol.ts"), "utf8");
     const processSource = fs.readFileSync(path.join(extensionRoot, "src", "process", "manager.ts"), "utf8");
 
@@ -590,7 +595,7 @@ describe("VSIX release manifest", () => {
 
   it("routes iCode compaction notifications into chat state", () => {
     const clientSource = fs.readFileSync(path.join(extensionRoot, "src", "acp", "client.ts"), "utf8");
-    const extensionSource = fs.readFileSync(path.join(extensionRoot, "src", "extension.ts"), "utf8");
+    const extensionSource = readExtensionSource();
     const notificationsSource = fs.readFileSync(path.join(extensionRoot, "src", "handlers", "notifications.ts"), "utf8");
     const runtimeSource = fs.readFileSync(path.join(extensionRoot, "src", "state", "runtime.ts"), "utf8");
     const panelStateSource = fs.readFileSync(path.join(extensionRoot, "src", "common", "chatPanelState.ts"), "utf8");
@@ -673,7 +678,7 @@ describe("VSIX release manifest", () => {
   it("keeps profile editing on the full inline dialogs instead of partial management forms", () => {
     const managementPanelSource = fs.readFileSync(path.join(extensionRoot, "src", "manage", "panel.ts"), "utf8");
     const managementSource = fs.readFileSync(path.join(extensionRoot, "src", "ui", "management.ts"), "utf8");
-    const extensionSource = fs.readFileSync(path.join(extensionRoot, "src", "extension.ts"), "utf8");
+    const extensionSource = readExtensionSource();
     const dialogsSource = readDialogsSource();
     const webviewDialogsSource = fs.readFileSync(path.join(extensionRoot, "src", "chat", "webview", "components", "dialogs.ts"), "utf8");
 
@@ -702,7 +707,7 @@ describe("VSIX release manifest", () => {
   });
 
   it("surfaces list-session failures instead of silently returning", () => {
-    const source = fs.readFileSync(path.join(extensionRoot, "src", "extension.ts"), "utf8")
+    const source = readExtensionSource()
       + readSource("src", "common", "sessionFormat.ts");
 
     expect(source).toContain("ListSessionsUnavailable");
@@ -717,7 +722,7 @@ describe("VSIX release manifest", () => {
   });
 
   it("surfaces unavailable new-session and select-agent command states", () => {
-    const source = fs.readFileSync(path.join(extensionRoot, "src", "extension.ts"), "utf8");
+    const source = readExtensionSource();
 
     expect(source).toContain("showCommandUnavailable");
     expect(source).toContain("NewSessionUnavailable");
@@ -810,7 +815,7 @@ describe("VSIX release manifest", () => {
     const clientSource = fs.readFileSync(path.join(extensionRoot, "src", "acp", "client.ts"), "utf8");
     const notificationsSource = fs.readFileSync(path.join(extensionRoot, "src", "handlers", "notifications.ts"), "utf8");
     const runtimeSource = fs.readFileSync(path.join(extensionRoot, "src", "state", "runtime.ts"), "utf8");
-    const extensionSource = fs.readFileSync(path.join(extensionRoot, "src", "extension.ts"), "utf8");
+    const extensionSource = readExtensionSource();
 
     expect(appSource).toContain("approvalMode");
     expect(appSource).toContain("审批模式");
@@ -970,7 +975,7 @@ describe("VSIX release manifest", () => {
 
   it("exposes a shareable support bundle for long-term VSIX/TUI mismatch debugging", () => {
     const dialogsSource = readDialogsSource();
-    const extensionSource = fs.readFileSync(path.join(extensionRoot, "src", "extension.ts"), "utf8");
+    const extensionSource = readExtensionSource();
     const actionsSource = fs.readFileSync(path.join(extensionRoot, "src", "handlers", "actions.ts"), "utf8");
     const appSource = readWebviewAppSource();
     const panelSource = fs.readFileSync(path.join(extensionRoot, "src", "chat", "panel.ts"), "utf8");
@@ -1069,7 +1074,7 @@ describe("VSIX release manifest", () => {
   });
 
   it("does not persist stale sessions before restore or manual load succeeds", () => {
-    const extensionSource = fs.readFileSync(path.join(extensionRoot, "src", "extension.ts"), "utf8");
+    const extensionSource = readExtensionSource();
     const dialogsSource = readDialogsSource();
     const runtimeSource = fs.readFileSync(path.join(extensionRoot, "src", "state", "runtime.ts"), "utf8");
 
@@ -1262,7 +1267,7 @@ describe("VSIX release manifest", () => {
     const clientSource = fs.readFileSync(path.join(extensionRoot, "src", "acp", "client.ts"), "utf8");
     const typesSource = fs.readFileSync(path.join(extensionRoot, "src", "acp", "types.ts"), "utf8");
     const notificationsSource = fs.readFileSync(path.join(extensionRoot, "src", "handlers", "notifications.ts"), "utf8");
-    const extensionSource = fs.readFileSync(path.join(extensionRoot, "src", "extension.ts"), "utf8");
+    const extensionSource = readExtensionSource();
 
     expect(typesSource).not.toContain("ImageAttachmentCompressionNotification");
     expect(clientSource).not.toContain("_chrys/image_attachment_compression_started");
@@ -1627,7 +1632,7 @@ describe("VSIX release manifest", () => {
   it("applies VSIX-selected defaults to newly created sessions", () => {
     const runtimeSource = fs.readFileSync(path.join(extensionRoot, "src", "state", "runtime.ts"), "utf8");
     const defaultsSource = fs.readFileSync(path.join(extensionRoot, "src", "session", "defaults.ts"), "utf8");
-    const extensionSource = fs.readFileSync(path.join(extensionRoot, "src", "extension.ts"), "utf8");
+    const extensionSource = readExtensionSource();
     const actionsSource = fs.readFileSync(path.join(extensionRoot, "src", "handlers", "actions.ts"), "utf8");
     const dialogsSource = readDialogsSource();
     const managementSource = fs.readFileSync(path.join(extensionRoot, "src", "ui", "management.ts"), "utf8");
@@ -1680,7 +1685,7 @@ describe("VSIX release manifest", () => {
   });
 
   it("opens independent session tabs without replacing a running session", () => {
-    const extensionSource = fs.readFileSync(path.join(extensionRoot, "src", "extension.ts"), "utf8");
+    const extensionSource = readExtensionSource();
     const dialogsSource = readDialogsSource();
     expect(extensionSource).toContain("findSessionRuntime(session.sessionId)");
     expect(extensionSource).toContain("createSessionRuntime(cwd)");
@@ -1690,7 +1695,7 @@ describe("VSIX release manifest", () => {
   });
 
   it("blocks rollback and current-session deletion while a turn is running", () => {
-    const extensionSource = fs.readFileSync(path.join(extensionRoot, "src", "extension.ts"), "utf8");
+    const extensionSource = readExtensionSource();
     const dialogsSource = readDialogsSource();
 
     expect(readSource("src/ui/changes.ts")).toContain("manager.state===\"idle\"");
@@ -1810,7 +1815,7 @@ describe("VSIX release manifest", () => {
   });
 
   it("keeps backend built-in agents owned by the connected iCode runtime", () => {
-    const extensionSource = readSource("src", "extension.ts");
+    const extensionSource = readExtensionSource();
 
     expect(extensionSource).toContain("rt.sessionManager = new SessionManager(client);");
     expect(extensionSource).not.toContain("ensureDefaultAgentProfileYaml");
@@ -1881,7 +1886,7 @@ describe("VSIX release manifest", () => {
 
   it("makes TreeView empty and error states actionable", () => {
     const source = fs.readFileSync(path.join(extensionRoot, "src", "views", "sessionTree.ts"), "utf8");
-    const extensionSource = fs.readFileSync(path.join(extensionRoot, "src", "extension.ts"), "utf8");
+    const extensionSource = readExtensionSource();
     const sessionFilesSource = fs.readFileSync(path.join(extensionRoot, "src", "common", "sessionFiles.ts"), "utf8");
 
     expect(source).toContain("iCode is starting... Open Doctor");
@@ -1939,7 +1944,7 @@ describe("VSIX release manifest", () => {
   });
 
   it("offers multi-root CWD selection while preserving automatic startup workspace resolution", () => {
-    const extensionSource = fs.readFileSync(path.join(extensionRoot, "src", "extension.ts"), "utf8");
+    const extensionSource = readExtensionSource();
     const dialogsSource = readDialogsSource();
     const decisions = fs.readFileSync(path.join(extensionRoot, "DESIGN_DECISIONS.md"), "utf8");
     const checklist = fs.readFileSync(path.join(extensionRoot, "RELEASE_CHECKLIST.md"), "utf8");
@@ -1953,6 +1958,8 @@ describe("VSIX release manifest", () => {
   it("reads contributed settings through the chrys configuration section", () => {
     const sourceFiles = [
       "src/extension.ts",
+      "src/backendConnection.ts",
+      "src/sessionCommands.ts",
       "src/common/chatPanelState.ts",
       "src/ui/dialogs.ts",
       ...fs.readdirSync(path.join(extensionRoot, "src", "ui", "dialogs")).map((name) => `src/ui/dialogs/${name}`),
