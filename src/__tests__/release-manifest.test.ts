@@ -23,6 +23,13 @@ function readSource(...segments: string[]): string {
   return fs.readFileSync(path.join(extensionRoot, ...segments), "utf8").replace(/\r\n/g, "\n");
 }
 
+/** The chat webview entry plus the catalogues split out of it. */
+function readWebviewAppSource(): string {
+  return ["app.ts", "uiText.ts", "slashCommands.ts", "themes.ts"]
+    .map((name) => readSource("src", "chat", "webview", name))
+    .join("\n");
+}
+
 /** src/ui/dialogs.ts is a barrel over src/ui/dialogs/*.ts; policy checks cover the whole family. */
 function readDialogsSource(): string {
   const directory = path.join(extensionRoot, "src", "ui", "dialogs");
@@ -553,7 +560,7 @@ describe("VSIX release manifest", () => {
     const typesSource = fs.readFileSync(path.join(extensionRoot, "src", "acp", "types.ts"), "utf8");
     const sessionHandlerSource = fs.readFileSync(path.join(extensionRoot, "src", "handlers", "session.ts"), "utf8");
     const runtimeSource = fs.readFileSync(path.join(extensionRoot, "src", "state", "runtime.ts"), "utf8");
-    const appSource = fs.readFileSync(path.join(extensionRoot, "src", "chat", "webview", "app.ts"), "utf8");
+    const appSource = readWebviewAppSource();
 
     expect(typesSource).toContain('sessionUpdate: "plan"');
     expect(sessionHandlerSource).toContain('case "plan":');
@@ -587,7 +594,7 @@ describe("VSIX release manifest", () => {
     const notificationsSource = fs.readFileSync(path.join(extensionRoot, "src", "handlers", "notifications.ts"), "utf8");
     const runtimeSource = fs.readFileSync(path.join(extensionRoot, "src", "state", "runtime.ts"), "utf8");
     const panelStateSource = fs.readFileSync(path.join(extensionRoot, "src", "common", "chatPanelState.ts"), "utf8");
-    const appSource = fs.readFileSync(path.join(extensionRoot, "src", "chat", "webview", "app.ts"), "utf8");
+    const appSource = readWebviewAppSource();
 
     expect(clientSource).toContain('case "_chrys/compaction_started":');
     expect(clientSource).toContain('case "_chrys/sub_agent_compaction_finished":');
@@ -736,7 +743,7 @@ describe("VSIX release manifest", () => {
   it("localizes high-frequency inline management and image capability notices", () => {
     const dialogsSource = readDialogsSource();
     const panelSource = fs.readFileSync(path.join(extensionRoot, "src", "chat", "panel.ts"), "utf8");
-    const appSource = fs.readFileSync(path.join(extensionRoot, "src", "chat", "webview", "app.ts"), "utf8");
+    const appSource = readWebviewAppSource();
     const companionSource = fs.readFileSync(path.join(extensionRoot, "src", "chat", "webview", "components", "companionPanel.ts"), "utf8");
     const modelDialogSource = fs.readFileSync(path.join(extensionRoot, "src", "chat", "webview", "components", "dialogs.ts"), "utf8");
     const managementPanelSource = fs.readFileSync(path.join(extensionRoot, "src", "manage", "panel.ts"), "utf8");
@@ -777,7 +784,7 @@ describe("VSIX release manifest", () => {
   });
 
   it("keeps mid-run prompt injection available from composer enter", () => {
-    const appSource = fs.readFileSync(path.join(extensionRoot, "src", "chat", "webview", "app.ts"), "utf8");
+    const appSource = readWebviewAppSource();
     const themeSource = fs.readFileSync(path.join(extensionRoot, "src", "chat", "webview", "styles", "theme.css"), "utf8");
     const actionsSource = fs.readFileSync(path.join(extensionRoot, "src", "handlers", "actions.ts"), "utf8");
     const managerSource = fs.readFileSync(path.join(extensionRoot, "src", "session", "manager.ts"), "utf8");
@@ -797,7 +804,7 @@ describe("VSIX release manifest", () => {
   });
 
   it("localizes persistent approval chrome and ask-user fallback prompts", () => {
-    const appSource = fs.readFileSync(path.join(extensionRoot, "src", "chat", "webview", "app.ts"), "utf8");
+    const appSource = readWebviewAppSource();
     const dialogComponentsSource = fs.readFileSync(path.join(extensionRoot, "src", "chat", "webview", "components", "dialogs.ts"), "utf8");
     const askUserSource = fs.readFileSync(path.join(extensionRoot, "src", "askUser", "modal.ts"), "utf8");
     const clientSource = fs.readFileSync(path.join(extensionRoot, "src", "acp", "client.ts"), "utf8");
@@ -854,7 +861,7 @@ describe("VSIX release manifest", () => {
   });
 
   it("keeps streaming agent and thought chunks updating the rendered bubble body", () => {
-    const appSource = fs.readFileSync(path.join(extensionRoot, "src", "chat", "webview", "app.ts"), "utf8");
+    const appSource = readWebviewAppSource();
     const messagesSource = fs.readFileSync(path.join(extensionRoot, "src", "chat", "webview", "components", "messages.ts"), "utf8");
     const sessionSource = fs.readFileSync(path.join(extensionRoot, "src", "handlers", "session.ts"), "utf8");
 
@@ -876,7 +883,7 @@ describe("VSIX release manifest", () => {
   });
 
   it("sets webview aria attributes as DOM attributes", () => {
-    const appSource = fs.readFileSync(path.join(extensionRoot, "src", "chat", "webview", "app.ts"), "utf8");
+    const appSource = readWebviewAppSource();
     const helpersSource = fs.readFileSync(path.join(extensionRoot, "src", "chat", "webview", "helpers.ts"), "utf8");
     const messagesSource = fs.readFileSync(path.join(extensionRoot, "src", "chat", "webview", "components", "messages.ts"), "utf8");
     const themeSource = fs.readFileSync(path.join(extensionRoot, "src", "chat", "webview", "styles", "theme.css"), "utf8");
@@ -924,7 +931,7 @@ describe("VSIX release manifest", () => {
   });
 
   it("keeps user turn numbers in the sidebar instead of the main chat bubble", () => {
-    const appSource = fs.readFileSync(path.join(extensionRoot, "src", "chat", "webview", "app.ts"), "utf8");
+    const appSource = readWebviewAppSource();
     const messagesSource = fs.readFileSync(path.join(extensionRoot, "src", "chat", "webview", "components", "messages.ts"), "utf8");
     const themeSource = fs.readFileSync(path.join(extensionRoot, "src", "chat", "webview", "styles", "theme.css"), "utf8");
     const decisionsSource = fs.readFileSync(path.join(extensionRoot, "DESIGN_DECISIONS.md"), "utf8");
@@ -949,7 +956,7 @@ describe("VSIX release manifest", () => {
   });
 
   it("shows localized slash argument labels while preserving command values", () => {
-    const appSource = fs.readFileSync(path.join(extensionRoot, "src", "chat", "webview", "app.ts"), "utf8");
+    const appSource = readWebviewAppSource();
 
     expect(appSource).toContain("localizedArgLabel");
     expect(appSource).toContain("localizedArgDescription");
@@ -965,7 +972,7 @@ describe("VSIX release manifest", () => {
     const dialogsSource = readDialogsSource();
     const extensionSource = fs.readFileSync(path.join(extensionRoot, "src", "extension.ts"), "utf8");
     const actionsSource = fs.readFileSync(path.join(extensionRoot, "src", "handlers", "actions.ts"), "utf8");
-    const appSource = fs.readFileSync(path.join(extensionRoot, "src", "chat", "webview", "app.ts"), "utf8");
+    const appSource = readWebviewAppSource();
     const panelSource = fs.readFileSync(path.join(extensionRoot, "src", "chat", "panel.ts"), "utf8");
     const toolRenderingSource = fs.readFileSync(path.join(extensionRoot, "src", "common", "toolRendering.ts"), "utf8");
 
@@ -1079,7 +1086,7 @@ describe("VSIX release manifest", () => {
   });
 
   it("supports TUI-style right-click copy for selected text and whole messages", () => {
-    const appSource = fs.readFileSync(path.join(extensionRoot, "src", "chat", "webview", "app.ts"), "utf8");
+    const appSource = readWebviewAppSource();
 
     expect(appSource).toContain("data-copy-message-id");
     expect(appSource).toContain("markCopyableMessageElement");
@@ -1138,7 +1145,7 @@ describe("VSIX release manifest", () => {
     const stateSource = fs.readFileSync(path.join(extensionRoot, "src", "common", "chatPanelState.ts"), "utf8");
     const versionSource = fs.readFileSync(path.join(extensionRoot, "src", "common", "version.ts"), "utf8");
     const uiThemeSource = fs.readFileSync(path.join(extensionRoot, "src", "common", "uiTheme.ts"), "utf8");
-    const appSource = fs.readFileSync(path.join(extensionRoot, "src", "chat", "webview", "app.ts"), "utf8");
+    const appSource = readWebviewAppSource();
     const dialogsSource = readDialogsSource();
     const themeSource = fs.readFileSync(path.join(extensionRoot, "src", "chat", "webview", "styles", "theme.css"), "utf8");
 
@@ -1178,7 +1185,7 @@ describe("VSIX release manifest", () => {
 
   it("keeps the idle footer status hidden until there is run state to show", () => {
     const statusSource = fs.readFileSync(path.join(extensionRoot, "src", "chat", "webview", "components", "statusBar.ts"), "utf8");
-    const appSource = fs.readFileSync(path.join(extensionRoot, "src", "chat", "webview", "app.ts"), "utf8");
+    const appSource = readWebviewAppSource();
 
     expect(statusSource).toContain("hasStatusRunContent");
     expect(statusSource).toContain("sessionState !== \"idle\" || Boolean(state.lastCompletedElapsed) || toolStats.total > 0");
@@ -1189,7 +1196,7 @@ describe("VSIX release manifest", () => {
   });
 
   it("matches TUI session-title behavior by hiding empty sessions and copying the full id", () => {
-    const appSource = fs.readFileSync(path.join(extensionRoot, "src", "chat", "webview", "app.ts"), "utf8");
+    const appSource = readWebviewAppSource();
     const themeSource = fs.readFileSync(path.join(extensionRoot, "src", "chat", "webview", "styles", "theme.css"), "utf8");
 
     expect(appSource).toContain("class: \"session-label hidden\"");
@@ -1204,7 +1211,7 @@ describe("VSIX release manifest", () => {
   });
 
   it("surfaces unsupported image input as a persistent TUI-style dialog", () => {
-    const appSource = fs.readFileSync(path.join(extensionRoot, "src", "chat", "webview", "app.ts"), "utf8");
+    const appSource = readWebviewAppSource();
 
     expect(appSource).toContain("showImageUnsupportedDialog");
     expect(appSource).toContain("imageUnsupportedTitle");
@@ -1217,7 +1224,7 @@ describe("VSIX release manifest", () => {
   });
 
   it("makes image preparation progress visible in the composer controls", () => {
-    const appSource = fs.readFileSync(path.join(extensionRoot, "src", "chat", "webview", "app.ts"), "utf8");
+    const appSource = readWebviewAppSource();
     const promptPasteSource = fs.readFileSync(path.join(extensionRoot, "src", "common", "promptPaste.ts"), "utf8");
 
     expect(appSource).toContain("if (preparingImageCount > 0)");
@@ -1271,7 +1278,7 @@ describe("VSIX release manifest", () => {
     const typesSource = fs.readFileSync(path.join(extensionRoot, "src", "acp", "types.ts"), "utf8");
     const notificationsSource = fs.readFileSync(path.join(extensionRoot, "src", "handlers", "notifications.ts"), "utf8");
     const managerSource = fs.readFileSync(path.join(extensionRoot, "src", "session", "manager.ts"), "utf8");
-    const appSource = fs.readFileSync(path.join(extensionRoot, "src", "chat", "webview", "app.ts"), "utf8");
+    const appSource = readWebviewAppSource();
     const companionHandlerSource = fs.readFileSync(path.join(extensionRoot, "src", "handlers", "companion.ts"), "utf8");
 
     expect(clientSource).not.toContain("_chrys/session_history_status");
@@ -1292,7 +1299,7 @@ describe("VSIX release manifest", () => {
   });
 
   it("keeps TUI-style #agent quick switching in the VSIX composer", () => {
-    const appSource = fs.readFileSync(path.join(extensionRoot, "src", "chat", "webview", "app.ts"), "utf8");
+    const appSource = readWebviewAppSource();
     const actionsSource = fs.readFileSync(path.join(extensionRoot, "src", "handlers", "actions.ts"), "utf8");
     const dialogsSource = readDialogsSource();
 
@@ -1321,7 +1328,7 @@ describe("VSIX release manifest", () => {
   });
 
   it("keeps TUI-style single-character shell trigger in the VSIX composer", () => {
-    const appSource = fs.readFileSync(path.join(extensionRoot, "src", "chat", "webview", "app.ts"), "utf8");
+    const appSource = readWebviewAppSource();
 
     expect(appSource).toContain("value === \"!\" || value === \"！\"");
     expect(appSource).toContain("showShellDisabledWhileRunning");
@@ -1330,7 +1337,7 @@ describe("VSIX release manifest", () => {
   });
 
   it("accepts fullwidth slash commands for CJK input parity with the TUI", () => {
-    const appSource = fs.readFileSync(path.join(extensionRoot, "src", "chat", "webview", "app.ts"), "utf8");
+    const appSource = readWebviewAppSource();
 
     expect(appSource).toContain("isSlashCommandText");
     expect(appSource).toContain("return /^[/／]/.test(text.trimStart())");
@@ -1340,7 +1347,7 @@ describe("VSIX release manifest", () => {
   });
 
   it("keeps the TUI Ctrl+J composer newline shortcut", () => {
-    const appSource = fs.readFileSync(path.join(extensionRoot, "src", "chat", "webview", "app.ts"), "utf8");
+    const appSource = readWebviewAppSource();
 
     expect(appSource).toContain("e.ctrlKey && !e.altKey && !e.metaKey && e.key.toLowerCase() === \"j\"");
     expect(appSource).toContain("replaceComposerSelection(\"\\n\")");
@@ -1348,7 +1355,7 @@ describe("VSIX release manifest", () => {
   });
 
   it("keeps the TUI Ctrl+B interrupt shortcut while the agent is running", () => {
-    const appSource = fs.readFileSync(path.join(extensionRoot, "src", "chat", "webview", "app.ts"), "utf8");
+    const appSource = readWebviewAppSource();
 
     expect(appSource).toContain("e.ctrlKey && !e.altKey && !e.metaKey && e.key.toLowerCase() === \"b\"");
     expect(appSource).toContain("state.currentSessionState === \"running\" || state.currentSessionState === \"cancelling\"");
@@ -1356,7 +1363,7 @@ describe("VSIX release manifest", () => {
   });
 
   it("does not bind or render TUI function-key/footer shortcut controls", () => {
-    const appSource = fs.readFileSync(path.join(extensionRoot, "src", "chat", "webview", "app.ts"), "utf8");
+    const appSource = readWebviewAppSource();
     const themeSource = fs.readFileSync(path.join(extensionRoot, "src", "chat", "webview", "styles", "theme.css"), "utf8");
 
     expect(appSource).not.toContain("const TUI_FUNCTION_KEY_SHORTCUTS");
@@ -1379,7 +1386,7 @@ describe("VSIX release manifest", () => {
   });
 
   it("keeps command help and coding-workflow slash documentation without TUI function keys", () => {
-    const appSource = fs.readFileSync(path.join(extensionRoot, "src", "chat", "webview", "app.ts"), "utf8");
+    const appSource = readWebviewAppSource();
 
     expect(appSource).toContain("const TUI_SHORTCUT_HELP");
     expect(appSource).toContain("Keyboard Shortcuts");
@@ -1413,7 +1420,7 @@ describe("VSIX release manifest", () => {
   });
 
   it("keeps TUI-style @file trigger boundaries, including CJK text", () => {
-    const appSource = fs.readFileSync(path.join(extensionRoot, "src", "chat", "webview", "app.ts"), "utf8");
+    const appSource = readWebviewAppSource();
     const dialogsSource = readDialogsSource();
 
     expect(appSource).toContain("isFileMentionTriggerText");
@@ -1430,7 +1437,7 @@ describe("VSIX release manifest", () => {
   it("preserves TUI runtime-skill slash prompts instead of blocking them as unknown commands", () => {
     const stateSource = fs.readFileSync(path.join(extensionRoot, "src", "common", "chatPanelState.ts"), "utf8");
     const panelSource = fs.readFileSync(path.join(extensionRoot, "src", "chat", "panel.ts"), "utf8");
-    const appSource = fs.readFileSync(path.join(extensionRoot, "src", "chat", "webview", "app.ts"), "utf8");
+    const appSource = readWebviewAppSource();
 
     expect(panelSource).toContain("runtimeSkillNames?: string[]");
     expect(stateSource).toContain("function runtimeSkillNames()");
@@ -1443,7 +1450,7 @@ describe("VSIX release manifest", () => {
   });
 
   it("supports Chinese slash-command aliases in the localized VSIX chat", () => {
-    const appSource = fs.readFileSync(path.join(extensionRoot, "src", "chat", "webview", "app.ts"), "utf8");
+    const appSource = readWebviewAppSource();
     const dialogsSource = readDialogsSource();
 
     expect(appSource).toContain("zhNames?: string[]");
@@ -1471,7 +1478,7 @@ describe("VSIX release manifest", () => {
 
   it("keeps high-frequency workspace slash commands usable for coding workflows", () => {
     const panelSource = fs.readFileSync(path.join(extensionRoot, "src", "chat", "panel.ts"), "utf8");
-    const appSource = fs.readFileSync(path.join(extensionRoot, "src", "chat", "webview", "app.ts"), "utf8");
+    const appSource = readWebviewAppSource();
     const actionsSource = fs.readFileSync(path.join(extensionRoot, "src", "handlers", "actions.ts"), "utf8");
     const dialogsSource = readDialogsSource();
 
@@ -1529,7 +1536,7 @@ describe("VSIX release manifest", () => {
   });
 
   it("keeps tool-card file and search-result links truly clickable from nested labels", () => {
-    const appSource = fs.readFileSync(path.join(extensionRoot, "src", "chat", "webview", "app.ts"), "utf8");
+    const appSource = readWebviewAppSource();
     const panelSource = fs.readFileSync(path.join(extensionRoot, "src", "chat", "panel.ts"), "utf8");
     const dialogsSource = readDialogsSource();
     const toolCardsSource = fs.readFileSync(path.join(extensionRoot, "src", "chat", "webview", "components", "toolCards.ts"), "utf8");
@@ -1552,7 +1559,7 @@ describe("VSIX release manifest", () => {
   });
 
   it("disables unsafe slash commands while the agent is running like the TUI", () => {
-    const appSource = fs.readFileSync(path.join(extensionRoot, "src", "chat", "webview", "app.ts"), "utf8");
+    const appSource = readWebviewAppSource();
     const themeSource = fs.readFileSync(path.join(extensionRoot, "src", "chat", "webview", "styles", "theme.css"), "utf8");
 
     expect(appSource).toContain("allowWhileRunning");
@@ -1577,7 +1584,7 @@ describe("VSIX release manifest", () => {
   });
 
   it("keeps terminal shell mode as a workspace-scoped IDE terminal with visible feedback", () => {
-    const appSource = fs.readFileSync(path.join(extensionRoot, "src", "chat", "webview", "app.ts"), "utf8");
+    const appSource = readWebviewAppSource();
     const dialogsSource = readDialogsSource();
     const shellPromptSource = fs.readFileSync(path.join(extensionRoot, "src", "chat", "webview", "shellPrompt.ts"), "utf8");
 
@@ -1648,7 +1655,7 @@ describe("VSIX release manifest", () => {
   it("documents local names, searchable prompt history and display-only clearing", () => {
     const decisions = readSource("DESIGN_DECISIONS.md");
     const checklist = readSource("RELEASE_CHECKLIST.md");
-    const app = readSource("src", "chat", "webview", "app.ts");
+    const app = readWebviewAppSource();
     const nameUi = readSource("src", "ui", "sessionName.ts");
     expect(decisions).toContain("| Local session names |");
     expect(decisions).toContain("| Prompt history search |");
@@ -1697,7 +1704,7 @@ describe("VSIX release manifest", () => {
   });
 
   it("blocks active model switching while a turn is running without blocking model management", () => {
-    const appSource = fs.readFileSync(path.join(extensionRoot, "src", "chat", "webview", "app.ts"), "utf8");
+    const appSource = readWebviewAppSource();
     const dialogsSource = readDialogsSource();
     const runtimeUtilsSource = fs.readFileSync(path.join(extensionRoot, "src", "common", "runtimeUtils.ts"), "utf8");
     const managementSource = fs.readFileSync(path.join(extensionRoot, "src", "ui", "management.ts"), "utf8");
@@ -1811,7 +1818,7 @@ describe("VSIX release manifest", () => {
   });
 
   it("wires Debug sidebar copy actions to real local and host commands", () => {
-    const appSource = readSource("src", "chat", "webview", "app.ts");
+    const appSource = readWebviewAppSource();
     const themeSource = readSource("src", "chat", "webview", "styles", "theme.css");
 
     expect(appSource).toContain("copyDebugSnapshot");
@@ -1841,7 +1848,7 @@ describe("VSIX release manifest", () => {
   });
 
   it("keeps composer hints and typed triggers in the input surface", () => {
-    const appSource = readSource("src", "chat", "webview", "app.ts");
+    const appSource = readWebviewAppSource();
     const themeSource = readSource("src", "chat", "webview", "styles", "theme.css");
 
     expect(appSource).toContain("class: \"input-hint\"");
@@ -1920,7 +1927,7 @@ describe("VSIX release manifest", () => {
   it("keeps workspace changes TUI-visible and blocked while the agent is busy", () => {
     const dialogsSource = readDialogsSource();
     const notificationsSource = fs.readFileSync(path.join(extensionRoot, "src", "handlers", "notifications.ts"), "utf8");
-    const appSource = fs.readFileSync(path.join(extensionRoot, "src", "chat", "webview", "app.ts"), "utf8");
+    const appSource = readWebviewAppSource();
 
     expect(appSource).toContain("names: [\"cd\", \"cwd\", \"chdir\", \"workspace\"]");
     expect(dialogsSource).toContain("WorkspaceChangeBlocked");

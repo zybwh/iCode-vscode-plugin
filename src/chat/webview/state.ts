@@ -2,12 +2,7 @@ import type { ChatMessage } from "../provider";
 import type { ProfileSummary } from "../../acp/types";
 import type { UiLanguage } from "../../common/i18n";
 import type { UiTheme } from "../../common/uiTheme";
-import type {
-  ChatApprovalDialogState,
-  ChatInlineDialogState,
-  ChatModelDialogState,
-  ChatPanelState,
-} from "../panel";
+import type { ChatInlineDialogState, ChatModelDialogState, ChatPanelState } from "../panel";
 
 // ──────────────────────────────────────────────
 // State interfaces
