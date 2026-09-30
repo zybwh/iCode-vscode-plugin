@@ -1,0 +1,3 @@
+
+# License inventory checks exact upstream bytes on every platform.
+licenses/** -text
