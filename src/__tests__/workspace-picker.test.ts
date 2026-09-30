@@ -1,5 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import * as path from "node:path";
+
 const host = vi.hoisted(() => ({
   folders: [] as { name: string; uri: { fsPath: string } }[],
   language: "en",
@@ -35,7 +37,7 @@ describe("workspace directory picker", () => {
       expect(items[0].picked).toBe(false);
       return [items[0]];
     });
-    expect(await pickAdditionalDirectories("/project/api",[])).toEqual(["/project/ui"]);
+    expect(await pickAdditionalDirectories("/project/api",[])).toEqual([path.resolve("/project/ui")]);
     host.quickPick.mockResolvedValueOnce([]);
     expect(await pickAdditionalDirectories("/project/api",["/project/ui"])).toEqual([]);
     expect(await pickAdditionalDirectories("/project/api",["/project/ui"])).toBeUndefined();

@@ -39,7 +39,8 @@ export function runIcodeCli(binary: string, args: string[], cwd: string, signal:
       if (!child.pid) return;
       try {
         if (process.platform === "win32") {
-          spawn("taskkill", ["/pid", String(child.pid), "/T", ...(force ? ["/F"] : [])], { stdio: "ignore", shell: false }).on("error", () => child.kill());
+          // Console processes on Windows do not support graceful taskkill; terminate the tree immediately.
+          spawn("taskkill", ["/pid", String(child.pid), "/T", "/F"], { stdio: "ignore", shell: false }).on("error", () => child.kill());
         } else process.kill(-child.pid, force ? "SIGKILL" : "SIGINT");
       } catch { /* The process may have already exited. */ }
       if (!force && !forceTimer) forceTimer = setTimeout(() => stop(true), 5000);

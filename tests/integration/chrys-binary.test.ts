@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { spawn, ChildProcess } from "node:child_process";
 import { createInterface, Interface } from "node:readline";
+import { randomUUID } from "node:crypto";
 import * as path from "node:path";
 import * as fs from "node:fs";
 
@@ -204,13 +205,16 @@ async function expectMethodRoutes(chrys: ChrysProcess, method: string, params: R
 describe("iCode Binary Integration", () => {
   let chrys: ChrysProcess;
   let sessionId: string;
+  const mockProfileId = randomUUID();
+  let wroteMockProfile = false;
 
   beforeAll(async () => {
     chrys = spawnChrys();
   }, 30_000);
 
-  afterAll(() => {
-    chrys.close();
+  afterAll(async () => {
+    try { if (wroteMockProfile) await chrys.send("_profiles/models/delete", { id: mockProfileId }); }
+    finally { chrys.close(); }
   });
 
   it(
@@ -339,6 +343,9 @@ describe("iCode Binary Integration", () => {
   it(
     "session/run sends prompt and gets response",
     async () => {
+      await chrys.send("_profiles/models/write", { profile: { id: mockProfileId, name: "VSIX integration mock", provider: "mock", model_id: "mock" } });
+      wroteMockProfile = true;
+      await chrys.send("session/set_model", { sessionId, modelId: mockProfileId });
       const result = (await chrys.send("session/prompt", {
         sessionId,
         prompt: [{ type: "text", text: "Say hello in one word" }],
@@ -460,6 +467,8 @@ describe("Public multi-root ACP contract", () => {
       expect(page.sessions.find(s=>s.sessionId===sessionId)?.additionalDirectories).toEqual([fs.realpathSync(extra)]);
       await client.closeSession(sessionId);
       await client.loadSession(root,sessionId,[]);
+      // Restoring a session can select the default agent model; set the fixture again.
+      await client.setModel(sessionId,profileId);
       await client.prompt(sessionId,[{type:"text",text:"Persist cleared scope fixture"}]);
       expect((await client.listSessions(root)).sessions.find(s=>s.sessionId===sessionId)?.additionalDirectories??[]).toEqual([]);
       await client.closeSession(sessionId);

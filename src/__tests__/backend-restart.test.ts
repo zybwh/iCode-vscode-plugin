@@ -1,4 +1,5 @@
 import { beforeEach, expect, it, vi } from "vitest";
+import * as path from "node:path";
 import * as crypto from "node:crypto";
 const harness = vi.hoisted(() => ({
   commands: new Map<string, () => Promise<void>>(),
@@ -85,22 +86,22 @@ it("settles a pending approval before replacing its handler", async () => {
 });
 
 it("restarts the backend in the directory selected from CWD before a session exists", async () => {
-  harness.quickPick.mockResolvedValue({ directory: "/workspace/second" });
+  harness.quickPick.mockResolvedValue({ directory: path.resolve("/workspace/second") });
   await changeWorkspace();
   expect(harness.initialize).toHaveBeenCalledTimes(2);
-  expect(harness.start).toHaveBeenLastCalledWith(process.execPath, expect.any(Array), "/workspace/second");
-  expect(rt.currentCwd).toBe("/workspace/second");
+  expect(harness.start).toHaveBeenLastCalledWith(process.execPath, expect.any(Array), path.resolve("/workspace/second"));
+  expect(rt.currentCwd).toBe(path.resolve("/workspace/second"));
   expect(rt.currentSessionId).toBeNull();
   expect(rt.connectionState).toBe("ready");
 });
 
 it("updates the active session workspace without restarting the backend", async () => {
   rt.currentSessionId = "session-1";
-  const setWorkspace = vi.spyOn(rt.sessionManager!, "setWorkspace").mockResolvedValue({ primaryCwd: "/workspace/second" });
-  harness.quickPick.mockResolvedValue({ directory: "/workspace/second" });
+  const setWorkspace = vi.spyOn(rt.sessionManager!, "setWorkspace").mockResolvedValue({ primaryCwd: path.resolve("/workspace/second") });
+  harness.quickPick.mockResolvedValue({ directory: path.resolve("/workspace/second") });
   await changeWorkspace();
-  expect(setWorkspace).toHaveBeenCalledWith("/workspace/second");
+  expect(setWorkspace).toHaveBeenCalledWith(path.resolve("/workspace/second"));
   expect(harness.initialize).toHaveBeenCalledTimes(1);
-  expect(rt.currentCwd).toBe("/workspace/second");
+  expect(rt.currentCwd).toBe(path.resolve("/workspace/second"));
   expect(rt.currentSessionId).toBe("session-1");
 });
